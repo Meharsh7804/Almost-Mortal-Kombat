@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#08070b" />
+    <meta
+      name="description"
+      content="RIFTBOUND — a browser-based 2D anime fighting game. Playable core combat prototype."
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2308070b'/%3E%3Cpath d='M18 14h20c8 0 13 5 13 12 0 6-3 10-8 12l9 12H39l-7-10h-3v10H18V14zm11 8v10h8c3 0 5-2 5-5s-2-5-5-5h-8z' fill='%23f3e7ee'/%3E%3Cpath d='M12 44l24-28' stroke='%23ff2f55' stroke-width='3'/%3E%3C/svg%3E"
+    />
+    <title>RIFTBOUND</title>
+  </head>
+  <body>
+    <div id="game-root" aria-label="RIFTBOUND game canvas"></div>
+    <div class="rotate-hint" aria-hidden="true">
+      <span class="rotate-hint__icon"></span>
+      <span>LANDSCAPE RECOMMENDED</span>
+    </div>
+    <noscript>
+      <div class="noscript">RIFTBOUND requires JavaScript to run.</div>
+    </noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

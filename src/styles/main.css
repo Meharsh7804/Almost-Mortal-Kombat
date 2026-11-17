@@ -1,0 +1,86 @@
+:root {
+  color-scheme: dark;
+  --rb-void: #050408;
+  --rb-background: #08070b;
+  --rb-crimson: #ff2f55;
+  --rb-violet: #8b3dff;
+  --rb-muted: #b9a4c0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: var(--rb-void);
+}
+
+body {
+  background-image:
+    radial-gradient(ellipse at 28% 38%, rgba(86, 24, 112, 0.2), transparent 55%),
+    radial-gradient(ellipse at 76% 28%, rgba(143, 15, 40, 0.16), transparent 50%),
+    linear-gradient(180deg, #050408 0%, #08070b 55%, #050408 100%);
+  color: var(--rb-muted);
+  font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#game-root {
+  position: fixed;
+  inset: 0;
+}
+
+#game-root canvas {
+  display: block;
+}
+
+.rotate-hint {
+  display: none;
+}
+
+@media (orientation: portrait) and (max-width: 900px) {
+  .rotate-hint {
+    position: fixed;
+    left: 50%;
+    bottom: max(18px, env(safe-area-inset-bottom));
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: rgba(185, 164, 192, 0.55);
+    font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+    font-size: 9px;
+    letter-spacing: 0.22em;
+    white-space: nowrap;
+    pointer-events: none;
+    transform: translateX(-50%);
+  }
+
+  .rotate-hint__icon {
+    display: inline-block;
+    width: 14px;
+    height: 9px;
+    border: 1px solid rgba(185, 164, 192, 0.55);
+    border-radius: 2px;
+  }
+}
+
+.noscript {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--rb-muted);
+  font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-align: center;
+}
