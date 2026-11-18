@@ -1,8 +1,11 @@
 import {
   attackPhaseAtFrame,
+  findCancelWindow,
   totalAttackFrames,
+  type AttackCategory,
   type AttackDefinition,
   type AttackPhase,
+  type CancelWindow,
 } from './FrameData';
 
 /**
@@ -14,6 +17,7 @@ export interface ActiveAttack {
   readonly definition: AttackDefinition;
   frame: number;
   readonly hitTargets: Set<string>;
+  projectileSpawned: boolean;
 }
 
 export function createActiveAttack(definition: AttackDefinition): ActiveAttack {
@@ -21,6 +25,7 @@ export function createActiveAttack(definition: AttackDefinition): ActiveAttack {
     definition,
     frame: 0,
     hitTargets: new Set<string>(),
+    projectileSpawned: false,
   };
 }
 
@@ -73,4 +78,15 @@ export function hasHitTarget(attack: ActiveAttack, targetId: string): boolean {
 
 export function markHitTarget(attack: ActiveAttack, targetId: string): void {
   attack.hitTargets.add(targetId);
+}
+
+export function hasContact(attack: ActiveAttack): boolean {
+  return attack.hitTargets.size > 0;
+}
+
+export function getCancelWindow(
+  attack: ActiveAttack,
+  nextCategory: AttackCategory,
+): CancelWindow | null {
+  return findCancelWindow(attack.definition, attack.frame, nextCategory);
 }

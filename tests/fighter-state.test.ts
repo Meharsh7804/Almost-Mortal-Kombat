@@ -66,13 +66,17 @@ describe('fighter state machine', () => {
   });
 
   it('exposes the full state list and actionability rules', () => {
-    expect(FIGHTER_STATES).toHaveLength(9);
+    expect(FIGHTER_STATES).toHaveLength(13);
     expect(isActionableState('IDLE')).toBe(true);
     expect(isActionableState('WALKING')).toBe(true);
     expect(isActionableState('JUMPING')).toBe(true);
     expect(isActionableState('FALLING')).toBe(true);
     expect(isActionableState('CROUCHING')).toBe(true);
     expect(isActionableState('ATTACKING')).toBe(false);
+    expect(isActionableState('SPECIAL_ATTACK')).toBe(false);
+    expect(isActionableState('BLOCKING')).toBe(false);
+    expect(isActionableState('BLOCKSTUN')).toBe(false);
+    expect(isActionableState('DODGING')).toBe(false);
     expect(isActionableState('HITSTUN')).toBe(false);
     expect(isActionableState('KNOCKDOWN')).toBe(false);
     expect(isActionableState('DEFEATED')).toBe(false);

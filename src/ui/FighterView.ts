@@ -67,12 +67,17 @@ export class FighterView {
     const state = fighter.state;
     const attackView = fighter.getAttackView();
     const attacking = attackView !== null;
+    const blocking = state === 'BLOCKING' || state === 'BLOCKSTUN';
     this.aura.setAlpha(
       fighter.isDefeated
         ? 0.04
-        : attacking
-          ? 0.16 + Math.sin(elapsedSeconds * 8) * 0.02
-          : 0.09 + Math.sin(elapsedSeconds * 2.4 + fighter.playerNumber) * 0.02,
+        : blocking
+          ? 0.15 + Math.sin(elapsedSeconds * 5) * 0.025
+          : attacking
+            ? 0.16 + Math.sin(elapsedSeconds * 8) * 0.02
+            : fighter.isDodging
+              ? 0.2
+              : 0.09 + Math.sin(elapsedSeconds * 2.4 + fighter.playerNumber) * 0.02,
     );
 
     this.drawBody(elapsedSeconds);
@@ -126,7 +131,12 @@ export class FighterView {
     }
 
     const color = this.flashRemainingMs > 0 ? BONE : this.fighter.config.color;
-    const alpha = state === 'ATTACKING' ? 0.8 : 0.45;
+    const alpha =
+      state === 'ATTACKING' || state === 'SPECIAL_ATTACK'
+        ? 0.8
+        : state === 'BLOCKING' || state === 'BLOCKSTUN'
+          ? 0.7
+          : 0.45;
     const direction = this.fighter.facing;
     const baseX = this.fighter.x + direction * 40;
     const baseY = GROUND_Y + 10;
@@ -159,15 +169,17 @@ export class FighterView {
     const secondary = flash ? BONE : fighter.config.accentColor;
     const accent = flash ? BONE : COLORS.gold;
 
-    const crouching = state === 'CROUCHING';
+    const crouching = state === 'CROUCHING' || fighter.isCrouchBlocking;
     const airborne = !fighter.grounded && !fighter.isDefeated;
     const walking = state === 'WALKING';
-    const attacking = state === 'ATTACKING';
+    const attacking = state === 'ATTACKING' || state === 'SPECIAL_ATTACK';
+    const blocking = state === 'BLOCKING' || state === 'BLOCKSTUN';
     const hitstun = state === 'HITSTUN';
     const defeated = fighter.isDefeated;
 
     const attackView = fighter.getAttackView();
-    const heavy = attackView?.definition.id === 'heavy-punch';
+    const heavy = attackView?.definition.category === 'HEAVY';
+    const special = attackView?.definition.category === 'SPECIAL';
     let extension = 0;
     let startupProgress = 0;
 
@@ -184,7 +196,7 @@ export class FighterView {
 
     const lean = extension * (heavy ? 11 : 6);
     const bob =
-      !crouching && !airborne && !attacking && !hitstun && !defeated
+      !crouching && !airborne && !attacking && !hitstun && !defeated && !blocking
         ? Math.sin(elapsedSeconds * 2.6 + fighter.playerNumber * 1.7) * 1.2
         : 0;
 
@@ -196,6 +208,10 @@ export class FighterView {
     const animPhase = elapsedSeconds * 11 + fighter.playerNumber * 0.8;
 
     graphics.clear();
+
+    if (fighter.isDodging) {
+      this.drawDodgeTrail(graphics);
+    }
 
     this.drawScarf(graphics, shoulderY + 2, secondary, elapsedSeconds);
 
@@ -235,6 +251,13 @@ export class FighterView {
       frontFootX = 20 + extension * (heavy ? 16 : 9);
       backKneeY = -38;
       frontKneeY = -34;
+    } else if (blocking) {
+      backFootX = -20;
+      frontFootX = 18;
+      backKneeX = -20;
+      frontKneeX = 16;
+      backKneeY = -34;
+      frontKneeY = -32;
     } else if (hitstun) {
       backFootX = -24;
       frontFootX = 14;
@@ -269,7 +292,9 @@ export class FighterView {
       10,
     );
 
-    this.drawBackArm(graphics, shoulderY, secondary, heavy, extension);
+    if (!blocking) {
+      this.drawBackArm(graphics, shoulderY, secondary, heavy, extension);
+    }
 
     const hipLeft = -14 + lean;
     const hipRight = 16 + lean;
@@ -312,24 +337,28 @@ export class FighterView {
     graphics.fillStyle(BONE, 0.9);
     graphics.fillCircle(headX + 9, headY - 2, 1.6);
 
-    this.drawFrontArm(
-      graphics,
-      shoulderY,
-      primary,
-      secondary,
-      accent,
-      heavy,
-      extension,
-      startupProgress,
-      attacking,
-      hitstun,
-    );
+    if (blocking) {
+      this.drawGuardArms(graphics, shoulderY, primary, secondary, accent);
+    } else {
+      this.drawFrontArm(
+        graphics,
+        shoulderY,
+        primary,
+        secondary,
+        accent,
+        heavy,
+        extension,
+        startupProgress,
+        attacking,
+        hitstun,
+      );
+    }
 
     if (attacking && attackView) {
       this.drawAttackEffect(
         graphics,
         shoulderY,
-        heavy,
+        heavy || special,
         extension,
         startupProgress,
         attackView.phase,
@@ -526,6 +555,62 @@ export class FighterView {
     if (phase === 'STARTUP' && heavy) {
       graphics.lineStyle(2, accent, 0.2 + startupProgress * 0.5);
       graphics.strokeCircle(15, shoulderY + 7, 12 + startupProgress * 12);
+    }
+  }
+
+  private drawGuardArms(
+    graphics: Phaser.GameObjects.Graphics,
+    shoulderY: number,
+    primary: number,
+    secondary: number,
+    accent: number,
+  ): void {
+    this.drawLimb(
+      graphics,
+      [
+        { x: -10, y: shoulderY + 5 },
+        { x: 8, y: shoulderY + 22 },
+        { x: 26, y: shoulderY + 2 },
+      ],
+      secondary,
+      8,
+    );
+    this.drawLimb(
+      graphics,
+      [
+        { x: 12, y: shoulderY + 4 },
+        { x: 22, y: shoulderY + 24 },
+        { x: 8, y: shoulderY + 8 },
+      ],
+      primary,
+      9,
+    );
+
+    graphics.fillStyle(accent, 0.3);
+    graphics.fillCircle(24, shoulderY + 6, 7);
+    graphics.lineStyle(2, accent, 0.55);
+    graphics.beginPath();
+    graphics.arc(14, shoulderY + 12, 34, -1.05, 0.55, false);
+    graphics.strokePath();
+  }
+
+  private drawDodgeTrail(graphics: Phaser.GameObjects.Graphics): void {
+    const fighter = this.fighter;
+    const duration = Math.max(1, fighter.stateDurationFrames);
+    const progress = Phaser.Math.Clamp(1 - fighter.stateRemainingFrames / duration, 0, 1);
+    const worldOffset = -fighter.currentDodgeDirection * (24 + progress * 54);
+    const localOffset = worldOffset * fighter.facing;
+    const color = fighter.config.color;
+
+    for (let ghost = 1; ghost <= 3; ghost += 1) {
+      const x = localOffset * (ghost / 3);
+      const alpha = 0.16 - ghost * 0.035;
+
+      graphics.fillStyle(color, alpha);
+      graphics.fillCircle(x, -138, 13);
+      graphics.fillRect(x - 13, -124, 26, 52);
+      graphics.fillRect(x - 12, -74, 10, 62);
+      graphics.fillRect(x + 3, -74, 10, 58);
     }
   }
 

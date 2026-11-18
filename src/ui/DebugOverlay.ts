@@ -1,5 +1,6 @@
 import type Phaser from 'phaser';
 
+import type { Projectile } from '../combat/ProjectileSystem';
 import { ARENA_BOUNDS } from '../data/ArenaConfig';
 import type { Fighter } from '../entities/Fighter';
 import { getAttackBox } from '../combat/HitboxSystem';
@@ -9,6 +10,7 @@ const COLORS_DEBUG = {
   hitbox: 0xff3b4e,
   hurtbox: 0x46ff8c,
   pushbox: 0x4d8dff,
+  projectile: 0xff4de0,
 } as const;
 
 /**
@@ -51,7 +53,7 @@ export class DebugOverlay {
     this.setEnabled(!this.enabled);
   }
 
-  update(fighters: readonly [Fighter, Fighter]): void {
+  update(fighters: readonly [Fighter, Fighter], projectiles: readonly Projectile[] = []): void {
     if (!this.enabled) {
       return;
     }
@@ -109,6 +111,23 @@ export class DebugOverlay {
           );
         }
       }
+    }
+
+    for (const projectile of projectiles) {
+      const definition = projectile.attack?.projectile;
+      if (!projectile.active || !definition) {
+        continue;
+      }
+
+      this.drawBox(
+        graphics,
+        projectile.x - definition.width / 2,
+        projectile.y - definition.height / 2,
+        definition.width,
+        definition.height,
+        COLORS_DEBUG.projectile,
+        0.14,
+      );
     }
   }
 

@@ -13,12 +13,20 @@ export const KEY_BINDINGS: Readonly<Record<string, KeyBinding>> = Object.freeze(
   KeyS: { player: 1, action: 'crouch' },
   KeyF: { player: 1, action: 'light' },
   KeyG: { player: 1, action: 'heavy' },
+  KeyT: { player: 1, action: 'block' },
+  KeyH: { player: 1, action: 'special1' },
+  KeyY: { player: 1, action: 'special2' },
+  KeyQ: { player: 1, action: 'dodge' },
   ArrowLeft: { player: 2, action: 'left' },
   ArrowRight: { player: 2, action: 'right' },
   ArrowUp: { player: 2, action: 'jump' },
   ArrowDown: { player: 2, action: 'crouch' },
   KeyJ: { player: 2, action: 'light' },
   KeyK: { player: 2, action: 'heavy' },
+  KeyO: { player: 2, action: 'block' },
+  KeyU: { player: 2, action: 'special1' },
+  KeyI: { player: 2, action: 'special2' },
+  KeyP: { player: 2, action: 'dodge' },
 });
 
 export interface KeyboardControllerOptions {

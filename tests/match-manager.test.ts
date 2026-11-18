@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { applyHit } from '../src/combat/DamageSystem';
-import { HEAVY_PUNCH, LIGHT_PUNCH } from '../src/combat/FrameData';
+import { ENERGY_BLAST, HEAVY_PUNCH, LIGHT_PUNCH } from '../src/combat/FrameData';
 import type { InputSnapshot } from '../src/controllers/InputManager';
 import { ARENA_BOUNDS } from '../src/data/ArenaConfig';
 import { PLAYER_ONE_CONFIG, PLAYER_TWO_CONFIG } from '../src/data/FighterData';
@@ -124,6 +124,61 @@ describe('match flow', () => {
 
     match.update(neutralInputs());
     expect(victim.x).toBeGreaterThan(frozenX);
+  });
+
+  it('buffers button presses during hitstop instead of dropping them', () => {
+    const match = createMatch();
+    advanceToFighting(match);
+
+    const attacker = match.fighters[0];
+    const victim = match.fighters[1];
+    attacker.setHorizontalPosition(500);
+    victim.setHorizontalPosition(560);
+
+    match.update([makeInput({}, { light: true }), makeInput()]);
+    advance(match, LIGHT_PUNCH.startupFrames - 1);
+    match.update(neutralInputs());
+    expect(match.hitstopActive).toBe(true);
+
+    match.update([makeInput({}, { dodge: true }), makeInput()]);
+
+    expect(match.hitstopActive).toBe(true);
+    expect(attacker.bufferedInputs).toEqual([expect.objectContaining({ action: 'dodge' })]);
+    expect(attacker.state).toBe('ATTACKING');
+  });
+
+  it('resolves an unguarded projectile hit at full damage', () => {
+    const match = createMatch();
+    advanceToFighting(match);
+
+    const attacker = match.fighters[0];
+    const victim = match.fighters[1];
+    attacker.setHorizontalPosition(500);
+    victim.setHorizontalPosition(620);
+
+    expect(attacker.tryStartAttack(ENERGY_BLAST)).toBe(true);
+    advance(match, 20);
+
+    expect(attacker.energy).toBe(81);
+    expect(victim.health).toBe(90);
+    expect(victim.energy).toBe(100);
+  });
+
+  it('restores energy and clears projectiles on restart', () => {
+    const match = createMatch();
+    advanceToFighting(match);
+
+    match.fighters[0].spendEnergy(70);
+    expect(match.fighters[0].tryStartAttack(ENERGY_BLAST)).toBe(true);
+    advance(match, 17);
+    expect(match.activeProjectiles).toHaveLength(1);
+
+    match.restart();
+
+    expect(match.fighters[0].energy).toBe(100);
+    expect(match.fighters[1].energy).toBe(100);
+    expect(match.activeProjectiles).toHaveLength(0);
+    expect(match.fighters[0].dodgeCooldown).toBe(0);
   });
 
   it('ends the match with a winner and delays the result overlay', () => {

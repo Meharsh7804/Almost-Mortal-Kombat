@@ -4,15 +4,16 @@ import {
   getAttackPhase,
   getAttackPhaseProgress,
   getAttackProgress,
+  getCancelWindow,
+  hasContact,
   type ActiveAttack,
 } from '../combat/AttackSystem';
-import {
-  HEAVY_PUNCH,
-  LIGHT_PUNCH,
-  type AttackDefinition,
-  type AttackPhase,
-} from '../combat/FrameData';
+import { DEFAULT_COMBAT_TUNING, type CombatTuning } from '../combat/CombatConfig';
+import type { CombatEvent } from '../combat/CombatEvents';
+import type { AttackDefinition, AttackPhase } from '../combat/FrameData';
+import { InputBuffer, type BufferedDirection, type BufferedInput } from '../combat/InputBuffer';
 import type { ArenaBounds } from '../data/ArenaConfig';
+import { DEFAULT_ENERGY_RULES, EnergySystem, type EnergyRules } from '../systems/EnergySystem';
 import { boxFromCenterBottom, type AABB } from '../utils/CollisionUtils';
 import { FighterStateMachine, type FighterState } from './FighterStateMachine';
 
@@ -47,6 +48,12 @@ export interface FighterConfig {
   readonly pushboxWidth: number;
   readonly hurtbox: FighterHurtboxConfig;
   readonly canAttackAirborne: boolean;
+  readonly lightAttack: AttackDefinition;
+  readonly heavyAttack: AttackDefinition;
+  readonly crouchingLightAttack: AttackDefinition;
+  readonly specialAttacks: readonly [AttackDefinition, AttackDefinition];
+  readonly energyRules?: EnergyRules;
+  readonly combatTuning?: CombatTuning;
 }
 
 export interface FighterControls {
@@ -56,6 +63,11 @@ export interface FighterControls {
   readonly jumpPressed: boolean;
   readonly lightPressed: boolean;
   readonly heavyPressed: boolean;
+  readonly block?: boolean;
+  readonly blockPressed?: boolean;
+  readonly special1Pressed?: boolean;
+  readonly special2Pressed?: boolean;
+  readonly dodgePressed?: boolean;
 }
 
 export const NEUTRAL_CONTROLS: FighterControls = Object.freeze({
@@ -65,6 +77,11 @@ export const NEUTRAL_CONTROLS: FighterControls = Object.freeze({
   jumpPressed: false,
   lightPressed: false,
   heavyPressed: false,
+  block: false,
+  blockPressed: false,
+  special1Pressed: false,
+  special2Pressed: false,
+  dodgePressed: false,
 });
 
 export interface FighterAttackView {
@@ -84,6 +101,7 @@ export class Fighter {
   readonly name: string;
   readonly playerNumber: PlayerNumber;
   readonly config: FighterConfig;
+  readonly tuning: CombatTuning;
 
   x: number;
   y: number;
@@ -91,13 +109,27 @@ export class Fighter {
   private facingDirection: FacingDirection = 1;
   private currentHealth: number;
   private readonly stateMachine = new FighterStateMachine();
+  private readonly energySystem: EnergySystem;
+  private readonly inputBuffer: InputBuffer;
+  private readonly attackCooldowns = new Map<string, number>();
+  private readonly pendingEvents: CombatEvent[] = [];
+  private readonly cancelChainCounts = new Map<string, number>();
   private currentAttack: ActiveAttack | null = null;
   private movementVelocityX = 0;
   private movementVelocityY = 0;
-  private moveDirection = 0;
+  private moveDirection: -1 | 0 | 1 = 0;
   private crouchHeld = false;
+  private blockHeld = false;
+  private blockCrouching = false;
+  private blockStartedFrame = -1;
+  private blockWindowAvailable = false;
+  private blockPressPending = false;
   private stateTimerDuration = 0;
   private groundedFlag = true;
+  private simulationFrame = 0;
+  private dodgeCooldownRemaining = 0;
+  private dodgeDirection: FacingDirection = 1;
+  private cancelChainDepth = 0;
 
   constructor(config: FighterConfig) {
     this.config = config;
@@ -107,6 +139,9 @@ export class Fighter {
     this.x = config.x;
     this.y = config.y;
     this.currentHealth = config.maxHealth;
+    this.tuning = config.combatTuning ?? DEFAULT_COMBAT_TUNING;
+    this.energySystem = new EnergySystem(config.energyRules ?? DEFAULT_ENERGY_RULES);
+    this.inputBuffer = new InputBuffer(this.tuning.inputBufferFrames);
   }
 
   get state(): FighterState {
@@ -123,6 +158,22 @@ export class Fighter {
 
   get maxHealth(): number {
     return this.config.maxHealth;
+  }
+
+  get energy(): number {
+    return this.energySystem.current;
+  }
+
+  get maxEnergy(): number {
+    return this.energySystem.max;
+  }
+
+  get energyRatio(): number {
+    return this.energySystem.ratio;
+  }
+
+  get energyRules(): EnergyRules {
+    return this.energySystem.rules;
   }
 
   get velocityX(): number {
@@ -149,12 +200,66 @@ export class Fighter {
     return this.stateTimerDuration;
   }
 
+  get stateFramesElapsed(): number {
+    return this.stateMachine.framesInState;
+  }
+
+  get simulationTick(): number {
+    return this.simulationFrame;
+  }
+
   get isDefeated(): boolean {
     return this.stateMachine.current === 'DEFEATED';
   }
 
   get isActionable(): boolean {
     return this.stateMachine.isActionable;
+  }
+
+  get isBlocking(): boolean {
+    return this.stateMachine.current === 'BLOCKING';
+  }
+
+  get isBlockstunned(): boolean {
+    return this.stateMachine.current === 'BLOCKSTUN';
+  }
+
+  get isHoldingBlock(): boolean {
+    return this.blockHeld;
+  }
+
+  get isCrouchBlocking(): boolean {
+    return (
+      (this.stateMachine.current === 'BLOCKING' || this.stateMachine.current === 'BLOCKSTUN') &&
+      this.blockCrouching
+    );
+  }
+
+  get isDodging(): boolean {
+    return this.stateMachine.current === 'DODGING';
+  }
+
+  get isInvulnerable(): boolean {
+    return (
+      this.stateMachine.current === 'DODGING' &&
+      this.stateMachine.framesInState <= this.tuning.dodge.invulnerabilityFrames
+    );
+  }
+
+  get dodgeCooldown(): number {
+    return this.dodgeCooldownRemaining;
+  }
+
+  get dodgeCooldownMax(): number {
+    return this.tuning.dodge.cooldownFrames;
+  }
+
+  get currentDodgeDirection(): FacingDirection {
+    return this.dodgeDirection;
+  }
+
+  get bufferedInputs(): readonly BufferedInput[] {
+    return this.inputBuffer.items;
   }
 
   setFacing(direction: FacingDirection): void {
@@ -169,34 +274,69 @@ export class Fighter {
     }
   }
 
+  isFacingPosition(x: number): boolean {
+    if (x === this.x) {
+      return true;
+    }
+    return x > this.x ? this.facingDirection === 1 : this.facingDirection === -1;
+  }
+
   setHorizontalPosition(x: number): void {
     this.x = x;
+  }
+
+  gainEnergy(amount: number): number {
+    return this.energySystem.gain(amount);
+  }
+
+  spendEnergy(amount: number): boolean {
+    return this.energySystem.spend(amount);
+  }
+
+  drainEvents(target: CombatEvent[]): void {
+    for (const event of this.pendingEvents) {
+      target.push(event);
+    }
+    this.pendingEvents.length = 0;
   }
 
   clearInput(): void {
     this.moveDirection = 0;
     this.crouchHeld = false;
+    this.blockHeld = false;
+    this.blockPressPending = false;
+  }
+
+  bufferControls(controls: FighterControls): void {
+    if (this.isDefeated) {
+      return;
+    }
+
+    this.enqueuePressedActions(controls);
+    this.inputBuffer.prune(this.simulationFrame);
   }
 
   applyControls(controls: FighterControls): void {
-    this.moveDirection = (controls.moveLeft ? -1 : 0) + (controls.moveRight ? 1 : 0);
+    this.moveDirection = ((controls.moveLeft ? -1 : 0) + (controls.moveRight ? 1 : 0)) as
+      -1 | 0 | 1;
     this.crouchHeld = controls.crouch;
+    this.blockHeld = controls.block === true;
+
+    if (controls.blockPressed === true) {
+      this.blockPressPending = true;
+    }
 
     if (this.isDefeated) {
       this.moveDirection = 0;
       this.crouchHeld = false;
+      this.blockHeld = false;
       return;
     }
 
-    if (controls.jumpPressed) {
-      this.tryJump();
-    }
-
-    if (controls.heavyPressed) {
-      this.tryStartAttack(HEAVY_PUNCH);
-    } else if (controls.lightPressed) {
-      this.tryStartAttack(LIGHT_PUNCH);
-    }
+    this.enqueuePressedActions(controls);
+    this.inputBuffer.prune(this.simulationFrame);
+    this.tryBufferedActions();
+    this.updateBlockState();
   }
 
   tryJump(): boolean {
@@ -214,25 +354,134 @@ export class Fighter {
     return true;
   }
 
-  tryStartAttack(definition: AttackDefinition): boolean {
+  tryDodge(direction: -1 | 0 | 1 = 0): boolean {
     if (
-      this.currentAttack !== null ||
-      !this.stateMachine.isActionable ||
       this.isDefeated ||
-      (!this.groundedFlag && !this.config.canAttackAirborne)
+      !this.groundedFlag ||
+      !this.stateMachine.isActionable ||
+      this.dodgeCooldownRemaining > 0
     ) {
       return false;
     }
 
-    if (!this.stateMachine.transition('ATTACKING')) {
+    const dodgeTuning = this.tuning.dodge;
+    if (!this.energySystem.canSpend(dodgeTuning.energyCost)) {
       return false;
     }
 
+    if (!this.stateMachine.transition('DODGING', dodgeTuning.durationFrames)) {
+      return false;
+    }
+
+    this.energySystem.spend(dodgeTuning.energyCost);
+    this.dodgeDirection = direction === 0 ? (-this.facingDirection as FacingDirection) : direction;
+    this.movementVelocityX = this.dodgeDirection * dodgeTuning.speed;
+    this.dodgeCooldownRemaining = dodgeTuning.cooldownFrames;
+    this.stateTimerDuration = dodgeTuning.durationFrames;
+    this.resetCancelChain();
+    this.blockPressPending = false;
+    this.blockWindowAvailable = false;
+
+    this.pendingEvents.push({
+      type: 'DODGE_STARTED',
+      fighterId: this.id,
+      playerNumber: this.playerNumber,
+      direction: this.dodgeDirection,
+    });
+
+    return true;
+  }
+
+  tryStartAttack(definition: AttackDefinition): boolean {
+    if (this.isDefeated) {
+      return false;
+    }
+
+    const existing = this.currentAttack;
+    const state = this.stateMachine.current;
+    const isCancel = existing !== null;
+
+    if (!this.groundedFlag && !(definition.airborne && this.config.canAttackAirborne)) {
+      return false;
+    }
+
+    if (isCancel) {
+      if (state !== 'ATTACKING' && state !== 'SPECIAL_ATTACK') {
+        return false;
+      }
+      if (!this.isValidCancel(existing, definition)) {
+        return false;
+      }
+    } else {
+      if (!this.stateMachine.isActionable && state !== 'BLOCKING') {
+        return false;
+      }
+    }
+
+    if (!this.energySystem.canSpend(definition.energyCost)) {
+      return false;
+    }
+
+    if (this.getAttackCooldown(definition.id) > 0) {
+      return false;
+    }
+
+    const targetState: FighterState =
+      definition.category === 'SPECIAL' || definition.category === 'ULTIMATE'
+        ? 'SPECIAL_ATTACK'
+        : 'ATTACKING';
+
+    if (!this.stateMachine.canTransitionTo(targetState)) {
+      return false;
+    }
+
+    if (isCancel) {
+      this.cancelChainDepth += 1;
+      this.cancelChainCounts.set(
+        definition.id,
+        (this.cancelChainCounts.get(definition.id) ?? 0) + 1,
+      );
+    } else {
+      this.resetCancelChain();
+      this.cancelChainCounts.set(definition.id, 1);
+    }
+
+    this.stateMachine.transition(targetState);
+    this.energySystem.spend(definition.energyCost);
     this.currentAttack = createActiveAttack(definition);
     this.stateTimerDuration = 0;
+    this.blockPressPending = false;
+    this.blockWindowAvailable = false;
+
+    if (definition.cooldownFrames > 0) {
+      this.attackCooldowns.set(definition.id, definition.cooldownFrames);
+    }
+
     if (this.groundedFlag) {
       this.movementVelocityX = 0;
     }
+
+    const special = definition.category === 'SPECIAL' || definition.category === 'ULTIMATE';
+    this.pendingEvents.push({
+      type: 'ATTACK_STARTED',
+      attackerId: this.id,
+      playerNumber: this.playerNumber,
+      attackId: definition.id,
+      attackName: definition.name,
+      category: definition.category,
+      special,
+    });
+
+    if (special) {
+      this.pendingEvents.push({
+        type: 'SPECIAL_ATTACK_USED',
+        fighterId: this.id,
+        playerNumber: this.playerNumber,
+        attackId: definition.id,
+        attackName: definition.name,
+      });
+    }
+
     return true;
   }
 
@@ -273,9 +522,76 @@ export class Fighter {
       this.currentAttack = null;
     }
 
-    if (this.stateMachine.current === 'ATTACKING') {
+    this.resetCancelChain();
+
+    if (
+      this.stateMachine.current === 'ATTACKING' ||
+      this.stateMachine.current === 'SPECIAL_ATTACK'
+    ) {
       this.stateMachine.transition(this.groundedFlag ? 'IDLE' : 'FALLING');
     }
+  }
+
+  enterHitstun(frames: number): void {
+    if (this.isDefeated) {
+      return;
+    }
+
+    this.cancelAttack();
+    this.clearInput();
+    this.blockWindowAvailable = false;
+
+    if (this.stateMachine.transition('HITSTUN', frames)) {
+      this.stateTimerDuration = Math.max(0, Math.floor(frames));
+      this.blockCrouching = false;
+    }
+  }
+
+  enterKnockdown(frames: number): void {
+    if (this.isDefeated) {
+      return;
+    }
+
+    this.cancelAttack();
+    this.clearInput();
+    this.blockWindowAvailable = false;
+
+    if (this.stateMachine.transition('KNOCKDOWN', frames)) {
+      this.stateTimerDuration = Math.max(0, Math.floor(frames));
+      this.blockCrouching = false;
+    }
+  }
+
+  enterBlockstun(frames: number): void {
+    if (this.isDefeated) {
+      return;
+    }
+
+    this.blockCrouching = this.crouchHeld;
+    this.blockWindowAvailable = false;
+    this.blockPressPending = false;
+
+    if (this.stateMachine.transition('BLOCKSTUN', frames)) {
+      this.stateTimerDuration = Math.max(0, Math.floor(frames));
+    }
+  }
+
+  tryPerfectGuard(): boolean {
+    if (
+      this.stateMachine.current !== 'BLOCKING' ||
+      !this.blockWindowAvailable ||
+      this.blockStartedFrame < 0
+    ) {
+      return false;
+    }
+
+    if (this.simulationFrame - this.blockStartedFrame > this.tuning.perfectGuardFrames) {
+      this.blockWindowAvailable = false;
+      return false;
+    }
+
+    this.blockWindowAvailable = false;
+    return true;
   }
 
   takeDamage(amount: number): number {
@@ -297,36 +613,11 @@ export class Fighter {
     }
   }
 
-  enterHitstun(frames: number): void {
-    if (this.isDefeated) {
-      return;
-    }
-
-    this.cancelAttack();
-    this.clearInput();
-
-    if (this.stateMachine.transition('HITSTUN', frames)) {
-      this.stateTimerDuration = Math.max(0, Math.floor(frames));
-    }
-  }
-
-  enterKnockdown(frames: number): void {
-    if (this.isDefeated) {
-      return;
-    }
-
-    this.cancelAttack();
-    this.clearInput();
-
-    if (this.stateMachine.transition('KNOCKDOWN', frames)) {
-      this.stateTimerDuration = Math.max(0, Math.floor(frames));
-    }
-  }
-
   setDefeated(): void {
     this.cancelAttack();
     this.clearInput();
     this.currentHealth = 0;
+    this.blockWindowAvailable = false;
     this.stateMachine.transition('DEFEATED');
     this.stateTimerDuration = 0;
   }
@@ -341,12 +632,25 @@ export class Fighter {
     this.facingDirection = 1;
     this.currentAttack = null;
     this.stateTimerDuration = 0;
+    this.simulationFrame = 0;
+    this.dodgeCooldownRemaining = 0;
+    this.dodgeDirection = 1;
+    this.blockCrouching = false;
+    this.blockStartedFrame = -1;
+    this.blockWindowAvailable = false;
+    this.blockPressPending = false;
+    this.cancelChainDepth = 0;
+    this.cancelChainCounts.clear();
+    this.attackCooldowns.clear();
+    this.pendingEvents.length = 0;
+    this.energySystem.reset();
+    this.inputBuffer.clear();
     this.stateMachine.reset('IDLE');
     this.clearInput();
   }
 
   getHurtbox(): AABB {
-    const crouching = this.stateMachine.current === 'CROUCHING';
+    const crouching = this.isCrouchingBody();
     const width = crouching
       ? this.config.hurtbox.crouchingWidth
       : this.config.hurtbox.standingWidth;
@@ -358,15 +662,17 @@ export class Fighter {
   }
 
   getPushbox(): AABB {
-    const height =
-      this.stateMachine.current === 'CROUCHING'
-        ? this.config.hurtbox.crouchingHeight
-        : this.config.hurtbox.standingHeight;
+    const height = this.isCrouchingBody()
+      ? this.config.hurtbox.crouchingHeight
+      : this.config.hurtbox.standingHeight;
 
     return boxFromCenterBottom(this.x, this.y, this.config.pushboxWidth, height);
   }
 
   step(dtSeconds: number, arena: ArenaBounds): void {
+    this.simulationFrame += 1;
+    this.tickCooldowns();
+
     if (this.stateMachine.current === 'DEFEATED') {
       this.applyGroundFriction(dtSeconds, 1200);
       this.integrate(dtSeconds, arena);
@@ -374,16 +680,22 @@ export class Fighter {
     }
 
     this.stateMachine.tick();
+    this.resolveTimedStateExits();
+    this.updateBlockState();
 
-    if (
-      (this.stateMachine.current === 'HITSTUN' || this.stateMachine.current === 'KNOCKDOWN') &&
-      this.stateMachine.remainingFrames <= 0
-    ) {
-      this.stateTimerDuration = 0;
-      this.stateMachine.transition(this.groundedFlag ? 'IDLE' : 'FALLING');
+    if (this.stateMachine.isActionable || this.stateMachine.current === 'BLOCKING') {
+      this.tryBufferedActions();
     }
 
-    if (this.stateMachine.isActionable) {
+    const state = this.stateMachine.current;
+
+    if (state === 'ATTACKING' || state === 'SPECIAL_ATTACK') {
+      this.applyAttackMovement(dtSeconds);
+    } else if (state === 'DODGING') {
+      this.applyGroundFriction(dtSeconds, this.tuning.dodge.friction);
+    } else if (state === 'BLOCKING' || state === 'BLOCKSTUN') {
+      this.applyCombatFriction(dtSeconds);
+    } else if (this.stateMachine.isActionable) {
       if (this.groundedFlag) {
         if (this.crouchHeld) {
           if (this.stateMachine.current !== 'CROUCHING') {
@@ -422,11 +734,217 @@ export class Fighter {
     }
   }
 
-  private finishAttack(): void {
-    this.currentAttack = null;
-    if (this.stateMachine.current === 'ATTACKING') {
+  private enqueuePressedActions(controls: FighterControls): void {
+    const tick = this.simulationFrame;
+    const direction: BufferedDirection = ((controls.moveLeft ? -1 : 0) +
+      (controls.moveRight ? 1 : 0)) as BufferedDirection;
+
+    if (controls.jumpPressed) {
+      this.inputBuffer.enqueue('jump', tick, direction);
+    }
+    if (controls.lightPressed) {
+      this.inputBuffer.enqueue('light', tick, direction);
+    }
+    if (controls.heavyPressed) {
+      this.inputBuffer.enqueue('heavy', tick, direction);
+    }
+    if (controls.special1Pressed) {
+      this.inputBuffer.enqueue('special1', tick, direction);
+    }
+    if (controls.special2Pressed) {
+      this.inputBuffer.enqueue('special2', tick, direction);
+    }
+    if (controls.dodgePressed) {
+      this.inputBuffer.enqueue('dodge', tick, direction);
+    }
+  }
+
+  private tryBufferedActions(): void {
+    if (this.isDefeated) {
+      this.inputBuffer.clear();
+      return;
+    }
+
+    this.inputBuffer.prune(this.simulationFrame);
+
+    for (const entry of this.inputBuffer.items) {
+      if (!this.executeBufferedAction(entry)) {
+        continue;
+      }
+
+      this.inputBuffer.consume(entry);
+      return;
+    }
+  }
+
+  private executeBufferedAction(entry: BufferedInput): boolean {
+    switch (entry.action) {
+      case 'jump':
+        return this.tryJump();
+      case 'light':
+        return this.tryStartAttack(
+          this.crouchHeld && this.groundedFlag
+            ? this.config.crouchingLightAttack
+            : this.config.lightAttack,
+        );
+      case 'heavy':
+        return this.tryStartAttack(this.config.heavyAttack);
+      case 'special1':
+        return this.tryStartAttack(this.config.specialAttacks[0]);
+      case 'special2':
+        return this.tryStartAttack(this.config.specialAttacks[1]);
+      case 'dodge':
+        return this.tryDodge(entry.direction);
+    }
+  }
+
+  private updateBlockState(): void {
+    if (this.isDefeated) {
+      return;
+    }
+
+    const state = this.stateMachine.current;
+
+    if (!this.blockHeld) {
+      if (state === 'BLOCKING') {
+        this.blockWindowAvailable = false;
+        this.blockStartedFrame = -1;
+        this.stateMachine.transition(this.crouchHeld ? 'CROUCHING' : 'IDLE');
+      }
+      return;
+    }
+
+    if (state === 'BLOCKING') {
+      this.blockCrouching = this.crouchHeld;
+      return;
+    }
+
+    if (!this.groundedFlag || !this.stateMachine.isActionable) {
+      return;
+    }
+
+    if (!this.stateMachine.transition('BLOCKING')) {
+      return;
+    }
+
+    this.blockCrouching = this.crouchHeld;
+    this.movementVelocityX = 0;
+
+    if (this.blockPressPending) {
+      this.blockStartedFrame = this.simulationFrame;
+      this.blockWindowAvailable = true;
+    }
+
+    this.blockPressPending = false;
+  }
+
+  private resolveTimedStateExits(): void {
+    const state = this.stateMachine.current;
+
+    if (this.stateMachine.remainingFrames > 0) {
+      return;
+    }
+
+    if (state === 'HITSTUN' || state === 'KNOCKDOWN') {
+      this.stateTimerDuration = 0;
+      this.stateMachine.transition(this.groundedFlag ? 'IDLE' : 'FALLING');
+      return;
+    }
+
+    if (state === 'BLOCKSTUN') {
+      this.stateTimerDuration = 0;
+      if (this.blockHeld && this.groundedFlag) {
+        this.stateMachine.transition('BLOCKING');
+        this.blockCrouching = this.crouchHeld;
+      } else {
+        this.stateMachine.transition(this.groundedFlag ? 'IDLE' : 'FALLING');
+      }
+      return;
+    }
+
+    if (state === 'DODGING') {
+      this.stateTimerDuration = 0;
+      this.movementVelocityX = 0;
       this.stateMachine.transition(this.groundedFlag ? 'IDLE' : 'FALLING');
     }
+  }
+
+  private isValidCancel(current: ActiveAttack, next: AttackDefinition): boolean {
+    const window = getCancelWindow(current, next.category);
+    if (!window) {
+      return false;
+    }
+
+    if (window.requiresContact && !hasContact(current)) {
+      return false;
+    }
+
+    if (this.cancelChainDepth + 1 > this.tuning.maxCancelChain) {
+      return false;
+    }
+
+    const repeats = this.cancelChainCounts.get(next.id) ?? 0;
+    return repeats < this.tuning.maxAttackRepeatsPerChain;
+  }
+
+  private resetCancelChain(): void {
+    this.cancelChainDepth = 0;
+    this.cancelChainCounts.clear();
+  }
+
+  private getAttackCooldown(attackId: string): number {
+    return this.attackCooldowns.get(attackId) ?? 0;
+  }
+
+  private tickCooldowns(): void {
+    if (this.dodgeCooldownRemaining > 0) {
+      this.dodgeCooldownRemaining -= 1;
+    }
+
+    for (const [attackId, remaining] of this.attackCooldowns) {
+      if (remaining <= 1) {
+        this.attackCooldowns.delete(attackId);
+      } else {
+        this.attackCooldowns.set(attackId, remaining - 1);
+      }
+    }
+  }
+
+  private isCrouchingBody(): boolean {
+    return (
+      this.stateMachine.current === 'CROUCHING' ||
+      ((this.stateMachine.current === 'BLOCKING' || this.stateMachine.current === 'BLOCKSTUN') &&
+        this.blockCrouching)
+    );
+  }
+
+  private finishAttack(): void {
+    this.currentAttack = null;
+    this.resetCancelChain();
+
+    if (
+      this.stateMachine.current === 'ATTACKING' ||
+      this.stateMachine.current === 'SPECIAL_ATTACK'
+    ) {
+      this.stateMachine.transition(this.groundedFlag ? 'IDLE' : 'FALLING');
+    }
+  }
+
+  private applyAttackMovement(dtSeconds: number): void {
+    const attack = this.currentAttack;
+    const advance = attack?.definition.advance;
+
+    if (
+      advance &&
+      attack &&
+      attack.frame >= advance.startFrame &&
+      attack.frame <= advance.endFrame
+    ) {
+      this.movementVelocityX = this.facingDirection * advance.velocityX;
+      return;
+    }
+
+    this.applyCombatFriction(dtSeconds);
   }
 
   private applyHorizontalMovement(
@@ -441,7 +959,8 @@ export class Fighter {
 
   private applyCombatFriction(dtSeconds: number): void {
     const state = this.stateMachine.current;
-    const friction = state === 'ATTACKING' ? 2400 : state === 'HITSTUN' ? 620 : 900;
+    const friction =
+      state === 'ATTACKING' || state === 'SPECIAL_ATTACK' ? 2400 : state === 'HITSTUN' ? 620 : 900;
 
     this.applyGroundFriction(dtSeconds, friction);
   }

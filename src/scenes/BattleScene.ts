@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 
 import type { HitEvent } from '../combat/CombatEngine';
+import type { CombatEvent } from '../combat/CombatEvents';
 import { GAME_BACKGROUND_COLOR, GAME_HEIGHT, GAME_WIDTH, SCENE_KEYS } from '../core/GameConfig';
 import { getGameLoop, type GameLoop } from '../core/GameLoop';
 import { KeyboardController } from '../controllers/KeyboardController';
@@ -8,8 +9,11 @@ import { InputManager } from '../controllers/InputManager';
 import { ARENA_BOUNDS } from '../data/ArenaConfig';
 import { PLAYER_ONE_CONFIG, PLAYER_TWO_CONFIG } from '../data/FighterData';
 import { TEXTURE_KEYS } from '../data/TextureKeys';
+import type { Fighter } from '../entities/Fighter';
 import { MatchManager } from '../systems/MatchManager';
+import { prefersReducedMotion } from '../ui/Accessibility';
 import { ArenaBackdrop } from '../ui/ArenaBackdrop';
+import { CombatVfx } from '../ui/CombatVfx';
 import { DebugOverlay } from '../ui/DebugOverlay';
 import { FighterView } from '../ui/FighterView';
 import { HUD, type HudFighterSnapshot } from '../ui/HUD';
@@ -32,6 +36,8 @@ export class BattleScene extends Phaser.Scene {
   private fighterViews: [FighterView, FighterView] | null = null;
   private victoryScreen: VictoryScreen | null = null;
   private debugOverlay: DebugOverlay | null = null;
+  private combatVfx: CombatVfx | null = null;
+  private reducedMotion = false;
   private hitSparks:
     | [Phaser.GameObjects.Particles.ParticleEmitter, Phaser.GameObjects.Particles.ParticleEmitter]
     | null = null;
@@ -45,6 +51,7 @@ export class BattleScene extends Phaser.Scene {
   create(): void {
     this.resultShown = false;
     this.transitioning = false;
+    this.reducedMotion = prefersReducedMotion();
 
     this.cameras.main.setBackgroundColor(GAME_BACKGROUND_COLOR);
     this.cameras.main.setBounds(0, 0, GAME_WIDTH, GAME_HEIGHT);
@@ -58,6 +65,7 @@ export class BattleScene extends Phaser.Scene {
     ];
     this.hud = new HUD(this);
     this.victoryScreen = new VictoryScreen(this);
+    this.combatVfx = new CombatVfx(this, this.reducedMotion);
     this.createHitSparks();
 
     this.inputManager = new InputManager();
@@ -98,8 +106,9 @@ export class BattleScene extends Phaser.Scene {
     this.hud.setPhaseLabel(this.match.stateLabel);
     this.hud.setAnnouncement(this.match.announcement);
 
+    this.combatVfx?.update(this.match.activeProjectiles, elapsed);
     this.backdrop.update(elapsed);
-    this.debugOverlay?.update(fighters);
+    this.debugOverlay?.update(fighters, this.match.activeProjectiles);
 
     if (!this.resultShown && this.match.resultVisible) {
       this.resultShown = true;
@@ -115,10 +124,79 @@ export class BattleScene extends Phaser.Scene {
     const inputs = this.inputManager.poll();
     const result = this.match.update(inputs);
 
+    this.handleCombatEvents(result.events);
+
     for (const hit of result.hits) {
       this.handleHit(hit);
     }
   };
+
+  private handleCombatEvents(events: readonly CombatEvent[]): void {
+    for (const event of events) {
+      switch (event.type) {
+        case 'ATTACK_BLOCKED': {
+          const victim = this.findFighter(event.victimId);
+          if (victim) {
+            this.combatVfx?.blockImpact(event.impactX, event.impactY, victim.config.color);
+          }
+          if (!this.reducedMotion) {
+            this.cameras.main.shake(60, 0.0016);
+          }
+          break;
+        }
+        case 'PERFECT_GUARD': {
+          const defender = this.findFighter(event.fighterId);
+          if (defender) {
+            this.combatVfx?.perfectGuard(defender.x, defender.y - 92, defender.config.color);
+            this.hud?.showNotice('PERFECT GUARD', COLORS.violet);
+          }
+          break;
+        }
+        case 'COMBO_STARTED':
+        case 'COMBO_UPDATED': {
+          const attacker = this.findFighter(event.attackerId);
+          if (!attacker) {
+            break;
+          }
+          this.hud?.showCombo(attacker.playerNumber, event.hits, event.damage);
+          if (event.hits >= 2) {
+            this.hud?.showNotice(
+              `${event.hits} HIT COMBO`,
+              attacker.playerNumber === 1 ? COLORS.cyan : COLORS.emberOrange,
+            );
+          }
+          break;
+        }
+        case 'COMBO_ENDED': {
+          const attacker = this.findFighter(event.attackerId);
+          if (attacker) {
+            this.hud?.clearCombo(attacker.playerNumber);
+          }
+          break;
+        }
+        case 'DODGE_STARTED': {
+          const fighter = this.findFighter(event.fighterId);
+          if (fighter) {
+            this.combatVfx?.dodgeTrail(fighter.x, fighter.y - 66, fighter.config.color);
+          }
+          break;
+        }
+        case 'SPECIAL_ATTACK_USED': {
+          const fighter = this.findFighter(event.fighterId);
+          if (fighter) {
+            this.hud?.showNotice(event.attackName, fighter.config.color);
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    }
+  }
+
+  private findFighter(id: string): Fighter | null {
+    return this.match?.fighters.find((fighter) => fighter.id === id) ?? null;
+  }
 
   private handleHit(hit: HitEvent): void {
     if (!this.fighterViews) {
@@ -132,10 +210,16 @@ export class BattleScene extends Phaser.Scene {
     sparks?.emitParticleAt(hit.impactX, hit.impactY, hit.attack.causesKnockdown ? 16 : 8);
 
     if (hit.defeated) {
-      this.cameras.main.shake(240, 0.008);
-      this.cameras.main.flash(160, 255, 110, 130);
+      if (!this.reducedMotion) {
+        this.cameras.main.shake(240, 0.008);
+        this.cameras.main.flash(160, 255, 110, 130);
+      }
     } else if (hit.attack.causesKnockdown) {
-      this.cameras.main.shake(150, 0.0045);
+      if (!this.reducedMotion) {
+        this.cameras.main.shake(150, 0.0045);
+      }
+    } else if (!this.reducedMotion) {
+      this.cameras.main.shake(70, 0.0012);
     }
   }
 
@@ -171,6 +255,11 @@ export class BattleScene extends Phaser.Scene {
       maxHealth: fighter.maxHealth,
       playerNumber: fighter.playerNumber,
       color: fighter.config.color,
+      energy: fighter.energy,
+      maxEnergy: fighter.maxEnergy,
+      dodgeCooldownFrames: fighter.dodgeCooldown,
+      dodgeCooldownMaxFrames: fighter.dodgeCooldownMax,
+      blocking: fighter.isBlocking || fighter.isBlockstunned,
     };
   }
 
@@ -242,6 +331,7 @@ export class BattleScene extends Phaser.Scene {
     this.debugOverlay = null;
 
     this.hitSparks = null;
+    this.combatVfx = null;
     this.fighterViews = null;
     this.match = null;
     this.hud = null;

@@ -1,4 +1,5 @@
 import { CombatEngine, type CombatTickResult } from '../combat/CombatEngine';
+import type { Projectile } from '../combat/ProjectileSystem';
 import { FIXED_STEP_SECONDS } from '../core/GameLoop';
 import { ARENA_BOUNDS, type ArenaBounds } from '../data/ArenaConfig';
 import { Fighter, type FighterConfig, type FighterControls } from '../entities/Fighter';
@@ -12,7 +13,11 @@ export const MATCH_TIMING = Object.freeze({
   resultDelayFrames: 55,
 });
 
-const EMPTY_RESULT: CombatTickResult = Object.freeze({ hits: Object.freeze([]) });
+const EMPTY_RESULT: CombatTickResult = Object.freeze({
+  hits: Object.freeze([]),
+  events: Object.freeze([]),
+  hitstopFrames: 0,
+});
 
 /**
  * Owns a single-round match: fighter construction, the READY/FIGHT countdown,
@@ -89,6 +94,10 @@ export class MatchManager {
     return this.hitstopRemaining > 0;
   }
 
+  get activeProjectiles(): readonly Projectile[] {
+    return this.combat.projectiles.active;
+  }
+
   get resultVisible(): boolean {
     return (
       this.currentPhase === 'FINISHED' && this.finishedFrames >= MATCH_TIMING.resultDelayFrames
@@ -123,6 +132,8 @@ export class MatchManager {
 
     if (this.hitstopRemaining > 0) {
       this.hitstopRemaining -= 1;
+      this.bufferControls(this.fighters[0], inputs[0]);
+      this.bufferControls(this.fighters[1], inputs[1]);
       return EMPTY_RESULT;
     }
 
@@ -134,8 +145,8 @@ export class MatchManager {
 
     const result = this.combat.update(this.fighters, this.arena);
 
-    if (result.hits.length > 0) {
-      this.hitstopRemaining = Math.max(...result.hits.map((hit) => hit.attack.hitstopFrames));
+    if (result.hitstopFrames > 0) {
+      this.hitstopRemaining = result.hitstopFrames;
     }
 
     this.finishIfNeeded();
@@ -145,6 +156,7 @@ export class MatchManager {
   restart(): void {
     this.fighters[0].reset();
     this.fighters[1].reset();
+    this.combat.reset();
     this.currentPhase = 'READY';
     this.phaseFrames = 0;
     this.finishedFrames = 0;
@@ -166,15 +178,11 @@ export class MatchManager {
   }
 
   private applyControls(fighter: Fighter, snapshot: InputSnapshot): void {
-    const controls: FighterControls = {
-      moveLeft: snapshot.held.left,
-      moveRight: snapshot.held.right,
-      crouch: snapshot.held.crouch,
-      jumpPressed: snapshot.pressed.jump,
-      lightPressed: snapshot.pressed.light,
-      heavyPressed: snapshot.pressed.heavy,
-    };
-    fighter.applyControls(controls);
+    fighter.applyControls(toFighterControls(snapshot));
+  }
+
+  private bufferControls(fighter: Fighter, snapshot: InputSnapshot): void {
+    fighter.bufferControls(toFighterControls(snapshot));
   }
 
   private finishIfNeeded(): void {
@@ -215,4 +223,20 @@ export class MatchManager {
     this.fighters[1].step(FIXED_STEP_SECONDS, this.arena);
     this.combat.updateFacing(this.fighters);
   }
+}
+
+function toFighterControls(snapshot: InputSnapshot): FighterControls {
+  return {
+    moveLeft: snapshot.held.left,
+    moveRight: snapshot.held.right,
+    crouch: snapshot.held.crouch,
+    jumpPressed: snapshot.pressed.jump,
+    lightPressed: snapshot.pressed.light,
+    heavyPressed: snapshot.pressed.heavy,
+    block: snapshot.held.block,
+    blockPressed: snapshot.pressed.block,
+    special1Pressed: snapshot.pressed.special1,
+    special2Pressed: snapshot.pressed.special2,
+    dodgePressed: snapshot.pressed.dodge,
+  };
 }

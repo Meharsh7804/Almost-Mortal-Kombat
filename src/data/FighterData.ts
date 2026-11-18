@@ -1,4 +1,14 @@
 import type { FighterConfig } from '../entities/Fighter';
+import {
+  ENERGY_BLAST,
+  HEAVY_PUNCH,
+  LIGHT_PUNCH,
+  LOW_KICK,
+  RISING_STRIKE,
+  SHADOW_DASH,
+  THUNDER_KICK,
+} from '../combat/FrameData';
+import { DEFAULT_ENERGY_RULES } from '../systems/EnergySystem';
 import { ARENA_BOUNDS } from './ArenaConfig';
 
 const SHARED_CONFIG = {
@@ -18,9 +28,13 @@ const SHARED_CONFIG = {
     crouchingHeight: 118,
   },
   canAttackAirborne: false,
+  lightAttack: LIGHT_PUNCH,
+  heavyAttack: HEAVY_PUNCH,
+  crouchingLightAttack: LOW_KICK,
+  energyRules: DEFAULT_ENERGY_RULES,
 } satisfies Omit<
   FighterConfig,
-  'id' | 'name' | 'playerNumber' | 'x' | 'y' | 'color' | 'accentColor'
+  'id' | 'name' | 'playerNumber' | 'x' | 'y' | 'color' | 'accentColor' | 'specialAttacks'
 >;
 
 export const PLAYER_ONE_CONFIG: FighterConfig = Object.freeze({
@@ -32,6 +46,7 @@ export const PLAYER_ONE_CONFIG: FighterConfig = Object.freeze({
   y: ARENA_BOUNDS.groundY,
   color: 0x2ee6ff,
   accentColor: 0x0c6b8f,
+  specialAttacks: Object.freeze([ENERGY_BLAST, RISING_STRIKE] as const),
 });
 
 export const PLAYER_TWO_CONFIG: FighterConfig = Object.freeze({
@@ -43,4 +58,5 @@ export const PLAYER_TWO_CONFIG: FighterConfig = Object.freeze({
   y: ARENA_BOUNDS.groundY,
   color: 0xff5a36,
   accentColor: 0x8f2c14,
+  specialAttacks: Object.freeze([SHADOW_DASH, THUNDER_KICK] as const),
 });
