@@ -50,6 +50,8 @@ export class HUD {
   private readonly phaseText: Phaser.GameObjects.Text;
   private readonly announcement: Phaser.GameObjects.Text;
   private readonly versusText: Phaser.GameObjects.Text;
+  private readonly p1Controls: Phaser.GameObjects.Text;
+  private readonly p2Controls: Phaser.GameObjects.Text;
 
   private displayedHealth: [number, number] = [0, 0];
   private chipHealth: [number, number] = [0, 0];
@@ -168,7 +170,7 @@ export class HUD {
       .setLetterSpacing(5)
       .setVisible(false);
 
-    this.createText(
+    this.p1Controls = this.createText(
       BAR_X,
       691,
       'P1  A/D MOVE   W JUMP   S CROUCH   F LIGHT   G HEAVY   T BLOCK   H/Y SPECIAL   Q DODGE',
@@ -181,7 +183,7 @@ export class HUD {
       .setOrigin(0, 1)
       .setAlpha(0.34);
 
-    this.createText(
+    this.p2Controls = this.createText(
       GAME_WIDTH - BAR_X,
       691,
       'P2  LEFT/RIGHT MOVE   UP JUMP   DOWN CROUCH   J LIGHT   K HEAVY   O BLOCK   U/I SPECIAL   P DODGE',
@@ -383,6 +385,16 @@ export class HUD {
     } else {
       this.versusText.setVisible(false);
     }
+  }
+
+  setSideLabels(p1Label: string, p2Label: string): void {
+    this.p1Label.setText(p1Label);
+    this.p2Label.setText(p2Label);
+  }
+
+  setControlHints(p1: string, p2: string): void {
+    this.p1Controls.setText(p1);
+    this.p2Controls.setText(p2);
   }
 
   private drawBars(players: readonly [HudFighterSnapshot, HudFighterSnapshot]): void {

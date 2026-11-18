@@ -31,6 +31,8 @@ export const KEY_BINDINGS: Readonly<Record<string, KeyBinding>> = Object.freeze(
 
 export interface KeyboardControllerOptions {
   readonly preventDefault?: boolean;
+  /** When omitted, bindings for both players are active. */
+  readonly enabledPlayers?: readonly PlayerNumber[];
 }
 
 type KeyboardTarget = Pick<Window, 'addEventListener' | 'removeEventListener'>;
@@ -44,6 +46,7 @@ export class KeyboardController {
   private readonly target: KeyboardTarget;
   private readonly input: InputManager;
   private readonly preventDefault: boolean;
+  private readonly enabledPlayers: ReadonlySet<PlayerNumber>;
   private destroyed = false;
 
   constructor(
@@ -54,6 +57,7 @@ export class KeyboardController {
     this.target = target;
     this.input = input;
     this.preventDefault = options.preventDefault ?? true;
+    this.enabledPlayers = new Set(options.enabledPlayers ?? [1, 2]);
 
     this.target.addEventListener('keydown', this.handleKeyDown as EventListener);
     this.target.addEventListener('keyup', this.handleKeyUp as EventListener);
@@ -69,12 +73,31 @@ export class KeyboardController {
     this.target.removeEventListener('keydown', this.handleKeyDown as EventListener);
     this.target.removeEventListener('keyup', this.handleKeyUp as EventListener);
     this.target.removeEventListener('blur', this.handleBlur as EventListener);
-    this.input.releaseAll();
+    for (const player of this.enabledPlayers) {
+      this.releasePlayer(player);
+    }
+  }
+
+  private releasePlayer(player: PlayerNumber): void {
+    for (const action of [
+      'left',
+      'right',
+      'jump',
+      'crouch',
+      'light',
+      'heavy',
+      'block',
+      'special1',
+      'special2',
+      'dodge',
+    ] as const) {
+      this.input.setButton(player, action, false);
+    }
   }
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
     const binding = KEY_BINDINGS[event.code];
-    if (!binding) {
+    if (!binding || !this.enabledPlayers.has(binding.player)) {
       return;
     }
 
@@ -87,7 +110,7 @@ export class KeyboardController {
 
   private readonly handleKeyUp = (event: KeyboardEvent): void => {
     const binding = KEY_BINDINGS[event.code];
-    if (!binding) {
+    if (!binding || !this.enabledPlayers.has(binding.player)) {
       return;
     }
 
@@ -99,6 +122,8 @@ export class KeyboardController {
   };
 
   private readonly handleBlur = (): void => {
-    this.input.releaseAll();
+    for (const player of this.enabledPlayers) {
+      this.releasePlayer(player);
+    }
   };
 }

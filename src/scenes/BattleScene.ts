@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 
+import { AIController } from '../ai/AIController';
+import type { AIDifficulty, AIPersonality } from '../ai/AITypes';
 import type { HitEvent } from '../combat/CombatEngine';
 import type { CombatEvent } from '../combat/CombatEvents';
 import { GAME_BACKGROUND_COLOR, GAME_HEIGHT, GAME_WIDTH, SCENE_KEYS } from '../core/GameConfig';
@@ -9,7 +11,7 @@ import { InputManager } from '../controllers/InputManager';
 import { ARENA_BOUNDS } from '../data/ArenaConfig';
 import { PLAYER_ONE_CONFIG, PLAYER_TWO_CONFIG } from '../data/FighterData';
 import { TEXTURE_KEYS } from '../data/TextureKeys';
-import type { Fighter } from '../entities/Fighter';
+import type { PlayerNumber, Fighter } from '../entities/Fighter';
 import { MatchManager } from '../systems/MatchManager';
 import { prefersReducedMotion } from '../ui/Accessibility';
 import { ArenaBackdrop } from '../ui/ArenaBackdrop';
@@ -20,6 +22,30 @@ import { HUD, type HudFighterSnapshot } from '../ui/HUD';
 import { ensureEmberTexture } from '../ui/ProceduralTextures';
 import { COLORS } from '../ui/Theme';
 import { VictoryScreen } from '../ui/VictoryScreen';
+
+export interface BattleSceneConfig {
+  readonly mode?: 'PVP' | 'PVC';
+  readonly difficulty?: AIDifficulty;
+  readonly personality?: AIPersonality;
+  readonly aiPlayer?: 1 | 2;
+  readonly seed?: number;
+}
+
+interface ResolvedBattleConfig {
+  readonly mode: 'PVP' | 'PVC';
+  readonly difficulty: AIDifficulty;
+  readonly personality: AIPersonality;
+  readonly aiPlayer: 1 | 2;
+  readonly seed: number;
+}
+
+const DEFAULT_BATTLE_CONFIG: ResolvedBattleConfig = Object.freeze({
+  mode: 'PVP',
+  difficulty: 'NORMAL',
+  personality: 'AGGRESSOR',
+  aiPlayer: 2,
+  seed: 1337,
+});
 
 /**
  * Playable battle scene. Simulation advances only through the shared fixed
@@ -44,13 +70,24 @@ export class BattleScene extends Phaser.Scene {
   private resultShown = false;
   private transitioning = false;
 
+  private battleConfig: ResolvedBattleConfig = DEFAULT_BATTLE_CONFIG;
+  private aiControllers: Partial<Record<PlayerNumber, AIController>> = {};
+  private simulationTick = 0;
+  private aiDebugKeyHandler: ((event: KeyboardEvent) => void) | null = null;
+
   constructor() {
     super({ key: SCENE_KEYS.BATTLE });
   }
 
-  create(): void {
+  init(data?: BattleSceneConfig): void {
+    this.battleConfig = this.resolveBattleConfig(data);
+  }
+
+  create(_data?: BattleSceneConfig): void {
     this.resultShown = false;
     this.transitioning = false;
+    this.simulationTick = 0;
+    this.aiControllers = {};
     this.reducedMotion = prefersReducedMotion();
 
     this.cameras.main.setBackgroundColor(GAME_BACKGROUND_COLOR);
@@ -69,13 +106,46 @@ export class BattleScene extends Phaser.Scene {
     this.createHitSparks();
 
     this.inputManager = new InputManager();
+
+    const humanPlayers: PlayerNumber[] =
+      this.battleConfig.mode === 'PVP'
+        ? [1, 2]
+        : [this.battleConfig.aiPlayer === 1 ? 2 : 1];
     this.keyboardController = new KeyboardController(window, this.inputManager, {
       preventDefault: true,
+      enabledPlayers: humanPlayers,
     });
+
+    if (this.battleConfig.mode === 'PVC') {
+      const aiPlayer = this.battleConfig.aiPlayer;
+      this.aiControllers[aiPlayer] = new AIController({
+        controlledPlayer: aiPlayer,
+        difficulty: this.battleConfig.difficulty,
+        personality: this.battleConfig.personality,
+        seed: this.battleConfig.seed,
+        debug: false,
+      });
+    }
+
+    this.applyHudModeLabels();
 
     if (import.meta.env.DEV) {
       this.debugOverlay = new DebugOverlay(this);
       window.addEventListener('keydown', this.handleDebugKey);
+      this.aiDebugKeyHandler = (event: KeyboardEvent) => {
+        if (event.code !== 'F4') return;
+        event.preventDefault();
+        const ai = this.getPrimaryAIController();
+        const match = this.match;
+        if (ai && match) {
+          const self = match.fighters[ai.controlledPlayer - 1];
+          const opponent = match.fighters[ai.controlledPlayer === 1 ? 1 : 0];
+          if (self && opponent) {
+            ai.setDebugEnabled(!ai.getDebugInfo(this.simulationTick, self, opponent).enabled);
+          }
+        }
+      };
+      window.addEventListener('keydown', this.aiDebugKeyHandler);
     }
 
     this.loop = getGameLoop(this);
@@ -86,6 +156,47 @@ export class BattleScene extends Phaser.Scene {
     }
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.handleShutdown, this);
+  }
+
+  private resolveBattleConfig(data?: BattleSceneConfig): ResolvedBattleConfig {
+    const mode = data?.mode === 'PVC' ? 'PVC' : data?.mode === 'PVP' ? 'PVP' : DEFAULT_BATTLE_CONFIG.mode;
+    const aiPlayer: 1 | 2 = data?.aiPlayer === 1 ? 1 : 2;
+    const difficulty: AIDifficulty = data?.difficulty ?? DEFAULT_BATTLE_CONFIG.difficulty;
+    const personality: AIPersonality = data?.personality ?? DEFAULT_BATTLE_CONFIG.personality;
+    const seed = typeof data?.seed === 'number' && Number.isFinite(data.seed) ? (data.seed >>> 0) : DEFAULT_BATTLE_CONFIG.seed;
+    return { mode, difficulty, personality, aiPlayer, seed };
+  }
+
+  private getPrimaryAIController(): AIController | null {
+    return this.aiControllers[1] ?? this.aiControllers[2] ?? null;
+  }
+
+  private applyHudModeLabels(): void {
+    if (!this.hud) return;
+    const ai = this.getPrimaryAIController();
+    if (!ai) {
+      this.hud.setSideLabels('P1 // RIFT', 'EMBER // P2');
+      this.hud.setControlHints(
+        'P1  A/D MOVE   W JUMP   S CROUCH   F LIGHT   G HEAVY   T BLOCK   H/Y SPECIAL   Q DODGE',
+        'P2  LEFT/RIGHT MOVE   UP JUMP   DOWN CROUCH   J LIGHT   K HEAVY   O BLOCK   U/I SPECIAL   P DODGE',
+      );
+      return;
+    }
+
+    const humanPlayer = ai.controlledPlayer === 1 ? 2 : 1;
+    const cpuLabel = `CPU P${ai.controlledPlayer} // ${ai.getProfile().difficulty}`;
+    const p1Label = ai.controlledPlayer === 1 ? cpuLabel : 'P1 // RIFT';
+    const p2Label = ai.controlledPlayer === 2 ? cpuLabel : 'EMBER // P2';
+    this.hud.setSideLabels(p1Label, p2Label);
+
+    const p1Human = 'P1  A/D MOVE   W JUMP   S CROUCH   F LIGHT   G HEAVY   T BLOCK   H/Y SPECIAL   Q DODGE';
+    const p2Human = 'P2  LEFT/RIGHT MOVE   UP JUMP   DOWN CROUCH   J LIGHT   K HEAVY   O BLOCK   U/I SPECIAL   P DODGE';
+    const p1Cpu = `P1  CPU  ${ai.getProfile().personality}  (${ai.getProfile().difficulty})`;
+    const p2Cpu = `P2  CPU  ${ai.getProfile().personality}  (${ai.getProfile().difficulty})`;
+    this.hud.setControlHints(
+      ai.controlledPlayer === 1 ? p1Cpu : humanPlayer === 1 ? p1Human : p1Cpu,
+      ai.controlledPlayer === 2 ? p2Cpu : humanPlayer === 2 ? p2Human : p2Cpu,
+    );
   }
 
   override update(_time: number, delta: number): void {
@@ -108,10 +219,19 @@ export class BattleScene extends Phaser.Scene {
 
     this.combatVfx?.update(this.match.activeProjectiles, elapsed);
     this.backdrop.update(elapsed);
-    this.debugOverlay?.update(fighters, this.match.activeProjectiles, [
-      this.fighterViews[0].getDebugSnapshot(),
-      this.fighterViews[1].getDebugSnapshot(),
-    ]);
+
+    const ai = this.getPrimaryAIController();
+    const aiSelf = ai ? fighters[ai.controlledPlayer - 1] : null;
+    const aiOpponent = ai ? fighters[ai.controlledPlayer === 1 ? 1 : 0] : null;
+    const aiDebug = ai && aiSelf && aiOpponent
+      ? ai.getDebugInfo(this.simulationTick, aiSelf, aiOpponent)
+      : null;
+    this.debugOverlay?.update(
+      fighters,
+      this.match.activeProjectiles,
+      [this.fighterViews[0].getDebugSnapshot(), this.fighterViews[1].getDebugSnapshot()],
+      aiDebug?.enabled ? aiDebug : null,
+    );
 
     if (!this.resultShown && this.match.resultVisible) {
       this.resultShown = true;
@@ -125,8 +245,13 @@ export class BattleScene extends Phaser.Scene {
     }
 
     // Hitstop freezes simulation state, so animation clocks must freeze with
-    // it. Everything else advances exactly once per fixed tick.
+    // it. AI controllers emit into InputManager before poll() so the same
+    // snapshot pipeline consumes human and CPU inputs identically.
     const frozen = this.match.hitstopActive;
+    const allowControl = this.match.controlsEnabled;
+
+    this.updateAIControllers(allowControl, frozen);
+
     const inputs = this.inputManager.poll();
     const result = this.match.update(inputs);
 
@@ -142,7 +267,33 @@ export class BattleScene extends Phaser.Scene {
       this.tickFighterAnimation(0);
       this.tickFighterAnimation(1);
     }
+
+    this.simulationTick += 1;
   };
+
+  private updateAIControllers(allowControl: boolean, hitstopActive: boolean): void {
+    if (!this.match || !this.inputManager) return;
+    const fighters = this.match.fighters;
+    const combat = this.match.combatEngine;
+
+    for (const player of [1, 2] as const) {
+      const controller = this.aiControllers[player];
+      if (!controller) continue;
+      const self = fighters[player - 1];
+      const opponent = fighters[player === 1 ? 1 : 0];
+      if (!self || !opponent) continue;
+      controller.update({
+        input: this.inputManager,
+        self,
+        opponent,
+        arena: ARENA_BOUNDS,
+        combat,
+        tick: this.simulationTick,
+        allowControl,
+        hitstopActive,
+      });
+    }
+  }
 
   private tickFighterAnimation(index: 0 | 1): void {
     const views = this.fighterViews;
@@ -365,7 +516,7 @@ export class BattleScene extends Phaser.Scene {
     this.transitioning = true;
     this.cameras.main.fadeOut(240, 3, 2, 6);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-      this.scene.restart();
+      this.scene.restart(this.battleConfig);
     });
   }
 
@@ -395,6 +546,13 @@ export class BattleScene extends Phaser.Scene {
     this.unsubscribeLoop = null;
     this.loop = null;
 
+    if (this.inputManager) {
+      for (const controller of Object.values(this.aiControllers)) {
+        controller?.reset(this.inputManager);
+      }
+    }
+    this.aiControllers = {};
+
     this.keyboardController?.destroy();
     this.keyboardController = null;
     this.inputManager = null;
@@ -405,6 +563,10 @@ export class BattleScene extends Phaser.Scene {
     if (this.debugOverlay) {
       window.removeEventListener('keydown', this.handleDebugKey);
       this.debugOverlay.setEnabled(false);
+    }
+    if (this.aiDebugKeyHandler) {
+      window.removeEventListener('keydown', this.aiDebugKeyHandler);
+      this.aiDebugKeyHandler = null;
     }
     this.debugOverlay = null;
 

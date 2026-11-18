@@ -98,6 +98,14 @@ export class MatchManager {
     return this.combat.projectiles.active;
   }
 
+  get combatEngine(): CombatEngine {
+    return this.combat;
+  }
+
+  getCombo(attackerId: string, victimId: string) {
+    return this.combat.getCombo(attackerId, victimId);
+  }
+
   get resultVisible(): boolean {
     return (
       this.currentPhase === 'FINISHED' && this.finishedFrames >= MATCH_TIMING.resultDelayFrames

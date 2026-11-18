@@ -1,5 +1,6 @@
 import type Phaser from 'phaser';
 
+import type { AIDebugInfo } from '../ai/AITypes';
 import type { FighterAnimatorDebug } from '../animation/FighterAnimator';
 import type { Projectile } from '../combat/ProjectileSystem';
 import { ARENA_BOUNDS } from '../data/ArenaConfig';
@@ -31,7 +32,9 @@ export class DebugOverlay {
   private readonly graphics: Phaser.GameObjects.Graphics;
   private readonly label: Phaser.GameObjects.Text;
   private readonly animLabel: Phaser.GameObjects.Text;
+  private readonly aiLabel: Phaser.GameObjects.Text;
   private lastAnimSignature = '';
+  private lastAISignature = '';
   private enabled = false;
 
   constructor(scene: Phaser.Scene) {
@@ -60,6 +63,21 @@ export class DebugOverlay {
       .setAlpha(0.94)
       .setDepth(81)
       .setVisible(false);
+
+    this.aiLabel = scene.add
+      .text(1260, 142, '', {
+        fontFamily: FONTS.mono,
+        fontSize: '10px',
+        color: CSS_COLORS.muted,
+        lineSpacing: 4,
+        align: 'right',
+        backgroundColor: 'rgba(12, 6, 18, 0.8)',
+      })
+      .setOrigin(1, 0)
+      .setPadding(7, 6, 9, 6)
+      .setAlpha(0.94)
+      .setDepth(81)
+      .setVisible(false);
   }
 
   get isEnabled(): boolean {
@@ -70,10 +88,13 @@ export class DebugOverlay {
     this.enabled = enabled;
     this.label.setVisible(enabled);
     this.animLabel.setVisible(enabled);
+    this.aiLabel.setVisible(enabled);
     if (!enabled) {
       this.graphics.clear();
       this.animLabel.setText('');
+      this.aiLabel.setText('');
       this.lastAnimSignature = '';
+      this.lastAISignature = '';
     }
   }
 
@@ -85,12 +106,14 @@ export class DebugOverlay {
     fighters: readonly [Fighter, Fighter],
     projectiles: readonly Projectile[] = [],
     animations: readonly FighterDebugInfo[] = [],
+    aiInfo?: AIDebugInfo | null,
   ): void {
     if (!this.enabled) {
       return;
     }
 
     this.updateAnimationPanel(animations);
+    this.updateAIPanel(aiInfo ?? null);
 
     const graphics = this.graphics;
     graphics.clear();
@@ -185,6 +208,38 @@ export class DebugOverlay {
     if (text !== this.lastAnimSignature) {
       this.lastAnimSignature = text;
       this.animLabel.setText(text);
+    }
+  }
+
+  private updateAIPanel(info: AIDebugInfo | null): void {
+    if (!info) {
+      if (this.lastAISignature !== '') {
+        this.lastAISignature = '';
+        this.aiLabel.setText('');
+      }
+      return;
+    }
+
+    const top = info.topActions
+      .slice(0, 4)
+      .map((entry) => `${entry.intent}:${entry.score.toFixed(2)}`)
+      .join(' | ');
+    const adapt = info.adaptation;
+    const lines = [
+      `AI DEBUG  P${info.controlledPlayer}`,
+      `${info.difficulty} / ${info.personality}`,
+      `SITUATION ${info.situation}`,
+      `STATE ${info.aiState} vs ${info.opponentObservedState}`,
+      `ACTION ${info.selectedAction}`,
+      `SCORE ${info.selectedScore.toFixed(2)}  REACT ${info.reactionFramesRemaining}  COMMIT ${info.commitmentFramesRemaining}`,
+      `REASON ${info.lastReason}`,
+      `TOP ${top || '-'}`,
+      `ADAPT n=${adapt.samples} jump=${adapt.jumpRate.toFixed(2)} blk=${adapt.blockRate.toFixed(2)} hvy=${adapt.heavyAttackRate.toFixed(2)}`,
+    ];
+    const text = lines.join('\n');
+    if (text !== this.lastAISignature) {
+      this.lastAISignature = text;
+      this.aiLabel.setText(text);
     }
   }
 

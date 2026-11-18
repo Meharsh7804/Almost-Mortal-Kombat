@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 
+import type { AIDifficulty, AIPersonality } from '../ai/AITypes';
 import { GAME_TITLE, SCENE_KEYS } from '../core/GameConfig';
 import { getGameLoop } from '../core/GameLoop';
 import { TEXTURE_KEYS } from '../data/TextureKeys';
@@ -8,9 +9,22 @@ import { MenuButton } from '../ui/MenuButton';
 import { ensureSoftGlowTexture } from '../ui/ProceduralTextures';
 import { COLORS, CSS_COLORS, FONTS } from '../ui/Theme';
 
+export type BattleMode = 'PVP' | 'PVC';
+
+export interface BattleLaunchConfig {
+  readonly mode: BattleMode;
+  readonly difficulty: AIDifficulty;
+  readonly personality: AIPersonality;
+  readonly aiPlayer: 1 | 2;
+  readonly seed: number;
+}
+
+const DIFFICULTIES: readonly AIDifficulty[] = ['EASY', 'NORMAL', 'HARD', 'EXPERT'];
+const PERSONALITIES: readonly AIPersonality[] = ['AGGRESSOR', 'DEFENDER', 'TRICKSTER', 'BRUISER'];
+
 const TITLE_Y = 260;
 const BUTTON_Y = 512;
-const HINT_Y = 570;
+const HINT_Y = 590;
 const PHASE_Y = 602;
 
 /**
@@ -32,10 +46,20 @@ export class MenuScene extends Phaser.Scene {
   private startButton!: MenuButton;
   private keyboardHint!: Phaser.GameObjects.Text;
   private phaseText!: Phaser.GameObjects.Text;
+  private modeText!: Phaser.GameObjects.Text;
+  private difficultyText!: Phaser.GameObjects.Text;
+  private personalityText!: Phaser.GameObjects.Text;
+  private aiSideText!: Phaser.GameObjects.Text;
+  private setupHintText!: Phaser.GameObjects.Text;
 
   private unsubscribeLoop: (() => void) | null = null;
   private accentPulse = 0;
   private starting = false;
+
+  private battleMode: BattleMode = 'PVC';
+  private difficulty: AIDifficulty = 'NORMAL';
+  private personality: AIPersonality = 'AGGRESSOR';
+  private aiPlayer: 1 | 2 = 2;
 
   constructor() {
     super({ key: SCENE_KEYS.MENU });
@@ -175,6 +199,62 @@ export class MenuScene extends Phaser.Scene {
       },
     });
 
+    this.modeText = this.add
+      .text(640, 408, '', {
+        fontFamily: FONTS.display,
+        fontSize: '20px',
+        color: CSS_COLORS.bone,
+      })
+      .setOrigin(0.5)
+      .setLetterSpacing(3)
+      .setDepth(21);
+
+    this.difficultyText = this.add
+      .text(640, 438, '', {
+        fontFamily: FONTS.mono,
+        fontSize: '11px',
+        color: CSS_COLORS.muted,
+      })
+      .setOrigin(0.5)
+      .setLetterSpacing(3)
+      .setDepth(21);
+
+    this.personalityText = this.add
+      .text(640, 458, '', {
+        fontFamily: FONTS.mono,
+        fontSize: '11px',
+        color: CSS_COLORS.muted,
+      })
+      .setOrigin(0.5)
+      .setLetterSpacing(3)
+      .setDepth(21);
+
+    this.aiSideText = this.add
+      .text(640, 478, '', {
+        fontFamily: FONTS.mono,
+        fontSize: '11px',
+        color: CSS_COLORS.muted,
+      })
+      .setOrigin(0.5)
+      .setLetterSpacing(3)
+      .setDepth(21);
+
+    this.setupHintText = this.add
+      .text(
+        640,
+        572,
+        'M MODE   D DIFFICULTY   P PERSONALITY   A AI SIDE   ENTER START',
+        {
+          fontFamily: FONTS.mono,
+          fontSize: '9px',
+          color: CSS_COLORS.muted,
+        },
+      )
+      .setOrigin(0.5)
+      .setLetterSpacing(2)
+      .setAlpha(0.36)
+      .setDepth(21);
+
     this.keyboardHint = this.add
       .text(640, HINT_Y, 'PRESS ENTER OR SPACE', {
         fontFamily: FONTS.mono,
@@ -187,7 +267,7 @@ export class MenuScene extends Phaser.Scene {
       .setDepth(21);
 
     this.phaseText = this.add
-      .text(640, PHASE_Y, 'PHASE 01 // TRAINING ARENA ONLINE', {
+      .text(640, PHASE_Y, 'PHASE 04 // PLAYER VS CPU READY', {
         fontFamily: FONTS.mono,
         fontSize: '10px',
         color: CSS_COLORS.muted,
@@ -196,11 +276,17 @@ export class MenuScene extends Phaser.Scene {
       .setLetterSpacing(3)
       .setAlpha(0.7)
       .setDepth(21);
+
+    this.refreshSetupText();
   }
 
   private bindInput(): void {
     this.input.keyboard?.on('keydown-ENTER', this.handleKeyboardStart);
     this.input.keyboard?.on('keydown-SPACE', this.handleKeyboardStart);
+    this.input.keyboard?.on('keydown-M', this.handleModeToggle);
+    this.input.keyboard?.on('keydown-D', this.handleDifficultyCycle);
+    this.input.keyboard?.on('keydown-P', this.handlePersonalityCycle);
+    this.input.keyboard?.on('keydown-A', this.handleAiSideToggle);
   }
 
   private connectSimulation(): void {
@@ -232,7 +318,12 @@ export class MenuScene extends Phaser.Scene {
     this.eyebrow.setAlpha(0);
     this.subtitle.setAlpha(0);
     this.divider.setAlpha(0);
+    this.modeText.setAlpha(0);
+    this.difficultyText.setAlpha(0);
+    this.personalityText.setAlpha(0);
+    this.aiSideText.setAlpha(0);
     this.startButton.setAlpha(0).setY(BUTTON_Y + 14);
+    this.setupHintText.setAlpha(0);
     this.keyboardHint.setAlpha(0);
     this.phaseText.setAlpha(0);
 
@@ -269,6 +360,36 @@ export class MenuScene extends Phaser.Scene {
       ease: 'Sine.easeOut',
     });
 
+    const aiConfigVisible = this.battleMode === 'PVC';
+    this.tweens.add({
+      targets: this.modeText,
+      alpha: 1,
+      duration: 450,
+      delay: 600,
+      ease: 'Sine.easeOut',
+    });
+    this.tweens.add({
+      targets: this.difficultyText,
+      alpha: aiConfigVisible ? 0.9 : 0.35,
+      duration: 450,
+      delay: 620,
+      ease: 'Sine.easeOut',
+    });
+    this.tweens.add({
+      targets: this.personalityText,
+      alpha: aiConfigVisible ? 0.9 : 0.35,
+      duration: 450,
+      delay: 640,
+      ease: 'Sine.easeOut',
+    });
+    this.tweens.add({
+      targets: this.aiSideText,
+      alpha: aiConfigVisible ? 0.8 : 0.35,
+      duration: 450,
+      delay: 660,
+      ease: 'Sine.easeOut',
+    });
+
     this.tweens.add({
       targets: this.startButton,
       alpha: 1,
@@ -279,8 +400,8 @@ export class MenuScene extends Phaser.Scene {
     });
 
     this.tweens.add({
-      targets: this.keyboardHint,
-      alpha: 0.3,
+      targets: [this.setupHintText, this.keyboardHint],
+      alpha: { from: 0, to: 0.34 },
       duration: 500,
       delay: 900,
       ease: 'Sine.easeOut',
@@ -307,9 +428,17 @@ export class MenuScene extends Phaser.Scene {
     this.tweens.killTweensOf(this.phaseText);
     this.phaseText.setText('ENTERING THE RIFT').setColor(CSS_COLORS.bone).setAlpha(1);
 
+    const config: BattleLaunchConfig = {
+      mode: this.battleMode,
+      difficulty: this.difficulty,
+      personality: this.personality,
+      aiPlayer: this.aiPlayer,
+      seed: (Date.now() & 0xffffffff) >>> 0,
+    };
+
     this.cameras.main.fadeOut(280, 4, 3, 7);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-      this.scene.start(SCENE_KEYS.BATTLE);
+      this.scene.start(SCENE_KEYS.BATTLE, config);
     });
   }
 
@@ -317,10 +446,59 @@ export class MenuScene extends Phaser.Scene {
     this.handleStart();
   };
 
+  private readonly handleModeToggle = (): void => {
+    if (this.starting) return;
+    this.battleMode = this.battleMode === 'PVC' ? 'PVP' : 'PVC';
+    this.refreshSetupText();
+  };
+
+  private readonly handleDifficultyCycle = (): void => {
+    if (this.starting) return;
+    const index = DIFFICULTIES.indexOf(this.difficulty);
+    this.difficulty = DIFFICULTIES[(index + 1) % DIFFICULTIES.length] ?? 'NORMAL';
+    this.refreshSetupText();
+  };
+
+  private readonly handlePersonalityCycle = (): void => {
+    if (this.starting) return;
+    const index = PERSONALITIES.indexOf(this.personality);
+    this.personality = PERSONALITIES[(index + 1) % PERSONALITIES.length] ?? 'AGGRESSOR';
+    this.refreshSetupText();
+  };
+
+  private readonly handleAiSideToggle = (): void => {
+    if (this.starting) return;
+    this.aiPlayer = this.aiPlayer === 2 ? 1 : 2;
+    this.refreshSetupText();
+  };
+
+  private refreshSetupText(): void {
+    const modeLabel = this.battleMode === 'PVC' ? 'PLAYER VS CPU' : 'PLAYER VS PLAYER';
+    this.modeText.setText(modeLabel).setColor(this.battleMode === 'PVC' ? CSS_COLORS.crimson : CSS_COLORS.bone);
+    this.difficultyText
+      .setText(`DIFFICULTY  ${this.difficulty}`)
+      .setAlpha(this.battleMode === 'PVC' ? 0.9 : 0.35);
+    this.personalityText
+      .setText(`PERSONALITY  ${this.personality}`)
+      .setAlpha(this.battleMode === 'PVC' ? 0.9 : 0.35);
+    this.aiSideText
+      .setText(`AI SIDE  P${this.aiPlayer}`)
+      .setAlpha(this.battleMode === 'PVC' ? 0.8 : 0.35);
+    this.phaseText.setText(
+      this.battleMode === 'PVC'
+        ? 'PHASE 04 // PLAYER VS CPU READY'
+        : 'PHASE 04 // LOCAL VERSUS READY',
+    );
+  }
+
   private handleShutdown(): void {
     this.unsubscribeLoop?.();
     this.unsubscribeLoop = null;
     this.input.keyboard?.off('keydown-ENTER', this.handleKeyboardStart);
     this.input.keyboard?.off('keydown-SPACE', this.handleKeyboardStart);
+    this.input.keyboard?.off('keydown-M', this.handleModeToggle);
+    this.input.keyboard?.off('keydown-D', this.handleDifficultyCycle);
+    this.input.keyboard?.off('keydown-P', this.handlePersonalityCycle);
+    this.input.keyboard?.off('keydown-A', this.handleAiSideToggle);
   }
 }
