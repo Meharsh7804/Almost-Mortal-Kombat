@@ -54,6 +54,12 @@ export interface FighterConfig {
   readonly specialAttacks: readonly [AttackDefinition, AttackDefinition];
   readonly energyRules?: EnergyRules;
   readonly combatTuning?: CombatTuning;
+  /** Source character id for roster/selection flow (visual identity may differ from runtime id). */
+  readonly characterId?: string;
+  /** Visual identity key used by procedural renderer. Falls back to characterId/id. */
+  readonly visualId?: string;
+  /** Display name for UI/HUD. Falls back to name. */
+  readonly displayName?: string;
 }
 
 export interface FighterControls {
@@ -102,6 +108,9 @@ export class Fighter {
   readonly playerNumber: PlayerNumber;
   readonly config: FighterConfig;
   readonly tuning: CombatTuning;
+  readonly characterId: string;
+  readonly visualId: string;
+  readonly displayName: string;
 
   x: number;
   y: number;
@@ -136,6 +145,9 @@ export class Fighter {
     this.id = config.id;
     this.name = config.name;
     this.playerNumber = config.playerNumber;
+    this.characterId = config.characterId ?? config.id;
+    this.visualId = config.visualId ?? config.characterId ?? config.id;
+    this.displayName = config.displayName ?? config.name;
     this.x = config.x;
     this.y = config.y;
     this.currentHealth = config.maxHealth;

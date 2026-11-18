@@ -1,16 +1,17 @@
-import { CombatEngine, type CombatTickResult } from '../combat/CombatEngine';
+﻿import { CombatEngine, type CombatTickResult } from '../combat/CombatEngine';
 import type { Projectile } from '../combat/ProjectileSystem';
-import { FIXED_STEP_SECONDS } from '../core/GameLoop';
+import { FIXED_STEP_SECONDS, FIXED_TIMESTEP_HZ } from '../core/GameLoop';
 import { ARENA_BOUNDS, type ArenaBounds } from '../data/ArenaConfig';
 import { Fighter, type FighterConfig, type FighterControls } from '../entities/Fighter';
 import type { InputSnapshot } from '../controllers/InputManager';
 
-export type MatchPhase = 'READY' | 'FIGHT' | 'FIGHTING' | 'FINISHED';
+export type MatchPhase = 'READY' | 'FIGHT' | 'FIGHTING' | 'ROUND_OVER' | 'FINISHED';
 
 export const MATCH_TIMING = Object.freeze({
   readyFrames: 90,
   fightBannerFrames: 45,
   resultDelayFrames: 55,
+  roundOverDelayFrames: 90,
 });
 
 const EMPTY_RESULT: CombatTickResult = Object.freeze({
@@ -19,31 +20,56 @@ const EMPTY_RESULT: CombatTickResult = Object.freeze({
   hitstopFrames: 0,
 });
 
+export interface MatchManagerOptions {
+  readonly roundsToWin?: number;
+  readonly roundTimerSeconds?: number;
+}
+
+export interface MatchStatsSnapshot {
+  readonly roundsWon: readonly [number, number];
+  readonly currentRound: number;
+  readonly roundsToWin: number;
+}
+
 /**
- * Owns a single-round match: fighter construction, the READY/FIGHT countdown,
- * simulation order, victory detection and restart. It never touches rendering;
- * the scene consumes its state and hit events.
+ * Owns match/round flow: fighter construction, countdowns, simulation order,
+ * timer/round wins, victory detection and restart. It never touches rendering;
+ * scenes consume state and combat events.
  */
 export class MatchManager {
   readonly fighters: readonly [Fighter, Fighter];
 
   private readonly arena: ArenaBounds;
   private readonly combat: CombatEngine;
+  private readonly configuredRoundsToWin: number;
+  private readonly configuredRoundTimerSeconds: number;
 
   private currentPhase: MatchPhase = 'READY';
   private phaseFrames = 0;
   private finishedFrames = 0;
+  private roundOverFrames = 0;
   private hitstopRemaining = 0;
   private currentWinner: Fighter | null = null;
+  private roundWinner: Fighter | null = null;
   private draw = false;
+  private roundDraw = false;
+  private timeUp = false;
+
+  private roundNumber = 1;
+  private roundWins: [number, number] = [0, 0];
+  private roundTimeRemainingFrames = 0;
 
   constructor(
     configs: readonly [FighterConfig, FighterConfig],
     arena: ArenaBounds = ARENA_BOUNDS,
     combat: CombatEngine = new CombatEngine(),
+    options: MatchManagerOptions = {},
   ) {
     this.arena = arena;
     this.combat = combat;
+    this.configuredRoundsToWin = Math.max(1, Math.floor(options.roundsToWin ?? 1));
+    this.configuredRoundTimerSeconds = Math.max(0, Math.floor(options.roundTimerSeconds ?? 0));
+    this.roundTimeRemainingFrames = this.configuredRoundTimerSeconds * FIXED_TIMESTEP_HZ;
     this.fighters = [new Fighter(configs[0]), new Fighter(configs[1])];
     this.faceFighters();
   }
@@ -56,29 +82,36 @@ export class MatchManager {
     return this.currentPhase === 'FIGHT' || this.currentPhase === 'FIGHTING';
   }
 
-  get announcement(): 'READY' | 'FIGHT' | 'K.O.' | null {
+  get announcement(): 'READY' | 'FIGHT' | 'K.O.' | 'TIME' | null {
     switch (this.currentPhase) {
       case 'READY':
         return 'READY';
       case 'FIGHT':
         return 'FIGHT';
+      case 'ROUND_OVER':
+        return this.timeUp ? 'TIME' : 'K.O.';
       case 'FINISHED':
-        return 'K.O.';
+        return this.timeUp ? 'TIME' : 'K.O.';
       case 'FIGHTING':
         return null;
     }
   }
 
   get stateLabel(): string {
+    const roundLabel = `ROUND ${String(this.roundNumber).padStart(2, '0')}`;
     switch (this.currentPhase) {
       case 'READY':
         return 'STANDBY';
       case 'FIGHT':
         return 'FIGHT';
       case 'FIGHTING':
-        return 'ROUND 01';
+        return roundLabel;
+      case 'ROUND_OVER':
+        return this.roundDraw ? 'ROUND DRAW' : `${this.roundWinner?.displayName ?? this.roundWinner?.name ?? 'WINNER'} WINS ROUND`;
       case 'FINISHED':
-        return this.draw ? 'DOUBLE K.O.' : 'MATCH COMPLETE';
+        if (this.draw) return 'DOUBLE K.O.';
+        if (this.configuredRoundsToWin > 1) return 'MATCH COMPLETE';
+        return 'MATCH COMPLETE';
     }
   }
 
@@ -86,8 +119,16 @@ export class MatchManager {
     return this.currentWinner;
   }
 
+  get roundWinnerFighter(): Fighter | null {
+    return this.roundWinner;
+  }
+
   get isDraw(): boolean {
     return this.draw;
+  }
+
+  get isTimeUp(): boolean {
+    return this.timeUp;
   }
 
   get hitstopActive(): boolean {
@@ -116,10 +157,59 @@ export class MatchManager {
     return this.finishedFrames;
   }
 
+  get currentRound(): number {
+    return this.roundNumber;
+  }
+
+  get roundsToWin(): number {
+    return this.configuredRoundsToWin;
+  }
+
+  get roundsWon(): readonly [number, number] {
+    return [this.roundWins[0], this.roundWins[1]];
+  }
+
+  get roundTimeRemainingFramesValue(): number {
+    return this.roundTimeRemainingFrames;
+  }
+
+  get roundTimeRemainingSeconds(): number {
+    return Math.ceil(this.roundTimeRemainingFrames / FIXED_TIMESTEP_HZ);
+  }
+
+  get roundTimerEnabled(): boolean {
+    return this.configuredRoundTimerSeconds > 0;
+  }
+
+  get isMatchOver(): boolean {
+    return this.currentPhase === 'FINISHED';
+  }
+
+  get arenaBounds(): ArenaBounds {
+    return this.arena;
+  }
+
+  get matchStatsSnapshot(): MatchStatsSnapshot {
+    return {
+      roundsWon: [this.roundWins[0], this.roundWins[1]],
+      currentRound: this.roundNumber,
+      roundsToWin: this.configuredRoundsToWin,
+    };
+  }
+
   update(inputs: readonly [InputSnapshot, InputSnapshot]): CombatTickResult {
     if (this.currentPhase === 'FINISHED') {
       this.finishedFrames += 1;
       this.stepVictoryScene();
+      return EMPTY_RESULT;
+    }
+
+    if (this.currentPhase === 'ROUND_OVER') {
+      this.roundOverFrames += 1;
+      this.stepVictoryScene();
+      if (this.roundOverFrames >= MATCH_TIMING.roundOverDelayFrames) {
+        this.beginNextRound();
+      }
       return EMPTY_RESULT;
     }
 
@@ -133,9 +223,12 @@ export class MatchManager {
       return EMPTY_RESULT;
     }
 
-    if (this.currentPhase === 'FIGHT' && this.phaseFrames >= MATCH_TIMING.fightBannerFrames) {
-      this.currentPhase = 'FIGHTING';
-      this.phaseFrames = 0;
+    if (this.currentPhase === 'FIGHT') {
+      if (this.phaseFrames >= MATCH_TIMING.fightBannerFrames) {
+        this.currentPhase = 'FIGHTING';
+        this.phaseFrames = 0;
+      }
+      // allow control during banner as before; timer starts once fighting begins
     }
 
     if (this.hitstopRemaining > 0) {
@@ -157,21 +250,51 @@ export class MatchManager {
       this.hitstopRemaining = result.hitstopFrames;
     }
 
+    if (this.currentPhase === 'FIGHTING') {
+      this.tickRoundTimer();
+    }
+
     this.finishIfNeeded();
     return result;
   }
 
   restart(): void {
-    this.fighters[0].reset();
-    this.fighters[1].reset();
+    this.resetFightersForRound();
     this.combat.reset();
     this.currentPhase = 'READY';
     this.phaseFrames = 0;
     this.finishedFrames = 0;
+    this.roundOverFrames = 0;
     this.hitstopRemaining = 0;
     this.currentWinner = null;
+    this.roundWinner = null;
     this.draw = false;
+    this.roundDraw = false;
+    this.timeUp = false;
+    this.roundNumber = 1;
+    this.roundWins = [0, 0];
+    this.roundTimeRemainingFrames = this.configuredRoundTimerSeconds * FIXED_TIMESTEP_HZ;
     this.faceFighters();
+  }
+
+  private beginNextRound(): void {
+    this.resetFightersForRound();
+    this.combat.reset();
+    this.roundNumber += 1;
+    this.currentPhase = 'READY';
+    this.phaseFrames = 0;
+    this.roundOverFrames = 0;
+    this.hitstopRemaining = 0;
+    this.roundWinner = null;
+    this.roundDraw = false;
+    this.timeUp = false;
+    this.roundTimeRemainingFrames = this.configuredRoundTimerSeconds * FIXED_TIMESTEP_HZ;
+    this.faceFighters();
+  }
+
+  private resetFightersForRound(): void {
+    this.fighters[0].reset();
+    this.fighters[1].reset();
   }
 
   private faceFighters(): void {
@@ -193,8 +316,37 @@ export class MatchManager {
     fighter.bufferControls(toFighterControls(snapshot));
   }
 
+  private tickRoundTimer(): void {
+    if (!this.roundTimerEnabled || this.currentPhase !== 'FIGHTING') {
+      return;
+    }
+    if (this.roundTimeRemainingFrames <= 0) {
+      return;
+    }
+
+    this.roundTimeRemainingFrames -= 1;
+    if (this.roundTimeRemainingFrames <= 0) {
+      this.roundTimeRemainingFrames = 0;
+      this.timeUp = true;
+      this.resolveRoundEndByTime();
+    }
+  }
+
+  private resolveRoundEndByTime(): void {
+    if (this.currentPhase === 'FINISHED' || this.currentPhase === 'ROUND_OVER') {
+      return;
+    }
+
+    const [first, second] = this.fighters;
+    if (first.health === second.health) {
+      this.endRound(null, true);
+      return;
+    }
+    this.endRound(first.health > second.health ? first : second, false);
+  }
+
   private finishIfNeeded(): void {
-    if (this.currentPhase === 'FINISHED') {
+    if (this.currentPhase === 'FINISHED' || this.currentPhase === 'ROUND_OVER') {
       return;
     }
 
@@ -212,17 +364,61 @@ export class MatchManager {
       second.setDefeated();
     }
 
-    this.currentPhase = 'FINISHED';
-    this.phaseFrames = 0;
-    this.finishedFrames = 0;
-    this.hitstopRemaining = 0;
-    this.draw = firstDown && secondDown;
-    this.currentWinner = this.draw ? null : firstDown ? second : first;
+    this.timeUp = false;
+    const roundDraw = firstDown && secondDown;
+    const winner = roundDraw ? null : firstDown ? second : first;
+    this.endRound(winner, roundDraw);
+  }
 
+  private endRound(winner: Fighter | null, roundDraw: boolean): void {
+    this.roundWinner = winner;
+    this.roundDraw = roundDraw;
+
+    if (winner) {
+      const idx = winner.playerNumber === 1 ? 0 : 1;
+      this.roundWins[idx] += 1;
+    }
+
+    const [first, second] = this.fighters;
     first.cancelAttack();
     second.cancelAttack();
     first.clearInput();
     second.clearInput();
+    this.hitstopRemaining = 0;
+
+    const matchOver =
+      this.roundWins[0] >= this.configuredRoundsToWin ||
+      this.roundWins[1] >= this.configuredRoundsToWin ||
+      // In single-round legacy mode, any round end ends the match.
+      (this.configuredRoundsToWin <= 1 && (winner !== null || roundDraw));
+
+    if (matchOver) {
+      this.currentPhase = 'FINISHED';
+      this.phaseFrames = 0;
+      this.finishedFrames = 0;
+      this.draw = this.determineMatchDraw();
+      this.currentWinner = this.determineMatchWinner();
+      return;
+    }
+
+    this.currentPhase = 'ROUND_OVER';
+    this.phaseFrames = 0;
+    this.roundOverFrames = 0;
+  }
+
+  private determineMatchWinner(): Fighter | null {
+    if (this.roundWins[0] === this.roundWins[1]) {
+      return null;
+    }
+    const winnerPlayer = this.roundWins[0] > this.roundWins[1] ? 1 : 2;
+    return this.fighters[winnerPlayer - 1] ?? null;
+  }
+
+  private determineMatchDraw(): boolean {
+    if (this.configuredRoundsToWin <= 1) {
+      return this.roundDraw;
+    }
+    return this.roundWins[0] === this.roundWins[1] && (this.roundDraw || this.timeUp);
   }
 
   /** Keeps physics settling after the result; no new hits or controls. */

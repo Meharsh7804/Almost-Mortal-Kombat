@@ -55,8 +55,13 @@ export class FighterView {
 
   constructor(scene: Phaser.Scene, fighter: Fighter) {
     this.fighter = fighter;
+    const visualId =
+      (fighter as Fighter & { visualId?: string }).visualId ??
+      fighter.config.visualId ??
+      fighter.config.characterId ??
+      fighter.id;
     this.visual = getCharacterVisual(
-      fighter.id,
+      visualId,
       fighter.config.color,
       fighter.config.accentColor,
     );

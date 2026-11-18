@@ -11,6 +11,8 @@ import {
 } from '../core/GameConfig';
 import { ensureSoftGlowTexture } from '../ui/ProceduralTextures';
 import { COLORS, CSS_COLORS, FONTS } from '../ui/Theme';
+import { getAudioManager } from '../audio/AudioManager';
+import { getOrLoadProfile } from '../progression/ProgressionService';
 
 const BAR_WIDTH = 300;
 const BAR_HEIGHT = 3;
@@ -159,6 +161,11 @@ export class PreloadScene extends Phaser.Scene {
   private handleLoadComplete(): void {
     this.loadingComplete = true;
     this.setProgress(1);
+    const audio = getAudioManager(this.game);
+    if (audio) {
+      audio.attach(this.sound);
+      audio.applySettings(getOrLoadProfile().settings);
+    }
     this.tryFinish();
   }
 

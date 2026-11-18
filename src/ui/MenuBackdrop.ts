@@ -238,7 +238,7 @@ export class MenuBackdrop {
       .setDepth(DEPTH.frame);
 
     this.scene.add
-      .text(GAME_WIDTH - 50, 44, 'PHASE 00', labelStyle)
+      .text(GAME_WIDTH - 50, 44, 'BUILD // RELEASE', labelStyle)
       .setOrigin(1, 0)
       .setLetterSpacing(2)
       .setAlpha(labelAlpha)

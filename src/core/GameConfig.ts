@@ -22,7 +22,22 @@ export const SCENE_KEYS = {
   BOOT: 'BootScene',
   PRELOAD: 'PreloadScene',
   MENU: 'MenuScene',
+  MODE_SELECT: 'ModeSelectScene',
+  CPU_CONFIG: 'CpuConfigScene',
+  CHARACTER_SELECT: 'CharacterSelectScene',
+  ARENA_SELECT: 'ArenaSelectScene',
+  VERSUS: 'VersusScene',
   BATTLE: 'BattleScene',
+  RESULTS: 'ResultsScene',
+  SETTINGS: 'SettingsScene',
+  HOW_TO_PLAY: 'HowToPlayScene',
+  ARCADE: 'ArcadeScene',
+  ARCADE_PROGRESS: 'ArcadeProgressScene',
+  ARCADE_ENDING: 'ArcadeEndingScene',
+  PLAYER_PROFILE: 'PlayerProfileScene',
+  MASTERY: 'MasteryScene',
+  ACHIEVEMENTS: 'AchievementScene',
+  COLLECTION: 'CollectionScene',
 } as const;
 
 export type SceneKey = (typeof SCENE_KEYS)[keyof typeof SCENE_KEYS];

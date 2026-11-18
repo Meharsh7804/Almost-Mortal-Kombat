@@ -68,6 +68,10 @@ export class MenuButton extends Phaser.GameObjects.Container {
     scene.add.existing(this);
   }
 
+  setLabel(label: string): void {
+    this.labelText.setText(label);
+  }
+
   pulse(): void {
     this.scene.tweens.killTweensOf(this.glow);
     this.glow.setAlpha(0.34);

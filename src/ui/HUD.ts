@@ -20,7 +20,6 @@ const BAR_X = 64;
 const BAR_Y = 76;
 const BAR_WIDTH = 500;
 const BAR_HEIGHT = 22;
-const BAR_GAP = 8;
 const ENERGY_Y = 116;
 const ENERGY_HEIGHT = 8;
 const DODGE_Y = 130;
@@ -28,542 +27,308 @@ const COMBO_Y = 150;
 const P2_BAR_X = GAME_WIDTH - BAR_X - BAR_WIDTH;
 const DEPTH = 100;
 
-/**
- * Fighting-game HUD. It receives plain health snapshots rather than Fighter
- * instances, so the UI stays decoupled from simulation internals. Bar values
- * interpolate on the render clock while damage targets update immediately.
- */
 export class HUD {
-  private readonly scene: Phaser.Scene;
-  private readonly barGraphics: Phaser.GameObjects.Graphics;
+  private p1HealthCurrent = 100;
+  private p2HealthCurrent = 100;
+  private p1HealthLag = 100;
+  private p2HealthLag = 100;
+  private p1EnergyCurrent = 100;
+  private p2EnergyCurrent = 100;
+  private p1DodgeRatio = 1;
+  private p2DodgeRatio = 1;
+
   private readonly p1Label: Phaser.GameObjects.Text;
   private readonly p2Label: Phaser.GameObjects.Text;
-  private readonly p1Name: Phaser.GameObjects.Text;
-  private readonly p2Name: Phaser.GameObjects.Text;
-  private readonly p1Health: Phaser.GameObjects.Text;
-  private readonly p2Health: Phaser.GameObjects.Text;
-  private readonly p1Dodge: Phaser.GameObjects.Text;
-  private readonly p2Dodge: Phaser.GameObjects.Text;
-  private readonly p1Combo: Phaser.GameObjects.Text;
-  private readonly p2Combo: Phaser.GameObjects.Text;
-  private readonly notice: Phaser.GameObjects.Text;
-  private readonly phaseText: Phaser.GameObjects.Text;
-  private readonly announcement: Phaser.GameObjects.Text;
-  private readonly versusText: Phaser.GameObjects.Text;
-  private readonly p1Controls: Phaser.GameObjects.Text;
-  private readonly p2Controls: Phaser.GameObjects.Text;
+  private readonly timerText: Phaser.GameObjects.Text;
+  private readonly roundText: Phaser.GameObjects.Text;
+  private readonly phaseLabel: Phaser.GameObjects.Text;
+  private readonly announcementText: Phaser.GameObjects.Text;
+  private readonly controlHint1: Phaser.GameObjects.Text;
+  private readonly controlHint2: Phaser.GameObjects.Text;
+  private readonly noticeText: Phaser.GameObjects.Text;
+  private readonly p1ComboText: Phaser.GameObjects.Text;
+  private readonly p2ComboText: Phaser.GameObjects.Text;
 
-  private displayedHealth: [number, number] = [0, 0];
-  private chipHealth: [number, number] = [0, 0];
-  private displayedEnergy: [number, number] = [0, 0];
-  private healthInitialized = false;
-  private currentAnnouncement: string | null = null;
-  private currentPhaseLabel = '';
+  private readonly bars: Phaser.GameObjects.Graphics;
+  private noticeTimer = 0;
+  private comboTimers = [0, 0];
 
   constructor(scene: Phaser.Scene) {
-    this.scene = scene;
-    this.barGraphics = scene.add.graphics().setDepth(DEPTH);
+    this.bars = scene.add.graphics().setDepth(DEPTH);
 
-    this.p1Label = this.createText(BAR_X, 24, 'P1 // RIFT', {
+    this.p1Label = scene.add.text(BAR_X, 44, 'P1', {
+      fontFamily: FONTS.display,
+      fontSize: '18px',
+      color: CSS_COLORS.bone,
+      stroke: '#000000',
+      strokeThickness: 3,
+    }).setDepth(DEPTH);
+
+    this.p2Label = scene.add.text(P2_BAR_X + BAR_WIDTH, 44, 'P2', {
+      fontFamily: FONTS.display,
+      fontSize: '18px',
+      color: CSS_COLORS.bone,
+      stroke: '#000000',
+      strokeThickness: 3,
+    }).setOrigin(1, 0).setDepth(DEPTH);
+
+    this.timerText = scene.add.text(GAME_WIDTH / 2, 36, '99', {
+      fontFamily: FONTS.display,
+      fontSize: '40px',
+      color: CSS_COLORS.bone,
+      stroke: '#000000',
+      strokeThickness: 5,
+    }).setOrigin(0.5, 0).setDepth(DEPTH);
+
+    this.roundText = scene.add.text(GAME_WIDTH / 2, 84, 'ROUND 01  •  0 - 0', {
       fontFamily: FONTS.mono,
       fontSize: '10px',
       color: CSS_COLORS.muted,
-    }).setOrigin(0, 0);
-    this.p2Label = this.createText(GAME_WIDTH - BAR_X, 24, 'EMBER // P2', {
+    }).setOrigin(0.5).setLetterSpacing(2).setDepth(DEPTH);
+
+    this.phaseLabel = scene.add.text(GAME_WIDTH / 2, 112, 'STANDBY', {
+      fontFamily: FONTS.mono,
+      fontSize: '11px',
+      color: CSS_COLORS.violet,
+    }).setOrigin(0.5).setLetterSpacing(3).setDepth(DEPTH);
+
+    this.announcementText = scene.add.text(GAME_WIDTH / 2, 250, '', {
+      fontFamily: FONTS.display,
+      fontSize: '84px',
+      color: CSS_COLORS.bone,
+      stroke: '#000000',
+      strokeThickness: 8,
+    }).setOrigin(0.5).setDepth(DEPTH).setVisible(false);
+
+    this.controlHint1 = scene.add.text(24, 688, '', {
       fontFamily: FONTS.mono,
       fontSize: '10px',
       color: CSS_COLORS.muted,
-    }).setOrigin(1, 0);
+    }).setAlpha(0.7).setDepth(DEPTH);
 
-    this.p1Name = this.createText(BAR_X, 34, '', {
-      fontFamily: FONTS.display,
-      fontSize: '30px',
-      color: CSS_COLORS.bone,
-    }).setOrigin(0, 0);
-    this.p2Name = this.createText(GAME_WIDTH - BAR_X, 34, '', {
-      fontFamily: FONTS.display,
-      fontSize: '30px',
-      color: CSS_COLORS.bone,
-    }).setOrigin(1, 0);
-
-    this.p1Health = this.createText(BAR_X, 104, '100', {
+    this.controlHint2 = scene.add.text(GAME_WIDTH - 24, 688, '', {
       fontFamily: FONTS.mono,
-      fontSize: '12px',
+      fontSize: '10px',
       color: CSS_COLORS.muted,
-    }).setOrigin(0, 0);
-    this.p2Health = this.createText(GAME_WIDTH - BAR_X, 104, '100', {
-      fontFamily: FONTS.mono,
-      fontSize: '12px',
-      color: CSS_COLORS.muted,
-    }).setOrigin(1, 0);
+    }).setOrigin(1, 0).setAlpha(0.7).setDepth(DEPTH);
 
-    this.p1Dodge = this.createText(BAR_X, DODGE_Y, 'DODGE READY', {
-      fontFamily: FONTS.mono,
-      fontSize: '9px',
-      color: CSS_COLORS.muted,
-    }).setOrigin(0, 0);
-    this.p2Dodge = this.createText(GAME_WIDTH - BAR_X, DODGE_Y, 'DODGE READY', {
-      fontFamily: FONTS.mono,
-      fontSize: '9px',
-      color: CSS_COLORS.muted,
-    }).setOrigin(1, 0);
-
-    this.p1Combo = this.createText(BAR_X, COMBO_Y, '', {
-      fontFamily: FONTS.display,
-      fontSize: '22px',
-      color: CSS_COLORS.bone,
-    })
-      .setOrigin(0, 0)
-      .setAlpha(0)
-      .setVisible(false);
-    this.p2Combo = this.createText(GAME_WIDTH - BAR_X, COMBO_Y, '', {
-      fontFamily: FONTS.display,
-      fontSize: '22px',
-      color: CSS_COLORS.bone,
-    })
-      .setOrigin(1, 0)
-      .setAlpha(0)
-      .setVisible(false);
-
-    this.notice = this.createText(GAME_WIDTH / 2, 172, '', {
+    this.noticeText = scene.add.text(GAME_WIDTH / 2, 170, '', {
       fontFamily: FONTS.display,
       fontSize: '24px',
       color: CSS_COLORS.bone,
-    })
-      .setOrigin(0.5)
-      .setLetterSpacing(3)
-      .setAlpha(0)
-      .setVisible(false);
+      stroke: '#000000',
+      strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(DEPTH).setVisible(false);
 
-    this.createText(GAME_WIDTH / 2, 24, 'ROUND 01', {
-      fontFamily: FONTS.mono,
-      fontSize: '10px',
-      color: CSS_COLORS.muted,
-    })
-      .setOrigin(0.5, 0)
-      .setLetterSpacing(4);
-
-    this.phaseText = this.createText(GAME_WIDTH / 2, 102, 'STANDBY', {
+    this.p1ComboText = scene.add.text(BAR_X, COMBO_Y, '', {
       fontFamily: FONTS.display,
-      fontSize: '16px',
-      color: CSS_COLORS.bone,
-    })
-      .setOrigin(0.5, 0)
-      .setLetterSpacing(3);
+      fontSize: '18px',
+      color: toCssColor(COLORS.cyan),
+      stroke: '#000000',
+      strokeThickness: 4,
+    }).setDepth(DEPTH).setVisible(false);
 
-    this.announcement = this.createText(GAME_WIDTH / 2, 254, '', {
+    this.p2ComboText = scene.add.text(P2_BAR_X + BAR_WIDTH, COMBO_Y, '', {
       fontFamily: FONTS.display,
-      fontSize: '96px',
-      color: CSS_COLORS.bone,
-      align: 'center',
-    })
-      .setOrigin(0.5)
-      .setLetterSpacing(8)
-      .setVisible(false);
-
-    this.versusText = this.createText(GAME_WIDTH / 2, 330, '', {
-      fontFamily: FONTS.mono,
-      fontSize: '11px',
-      color: CSS_COLORS.muted,
-    })
-      .setOrigin(0.5)
-      .setLetterSpacing(5)
-      .setVisible(false);
-
-    this.p1Controls = this.createText(
-      BAR_X,
-      691,
-      'P1  A/D MOVE   W JUMP   S CROUCH   F LIGHT   G HEAVY   T BLOCK   H/Y SPECIAL   Q DODGE',
-      {
-        fontFamily: FONTS.mono,
-        fontSize: '9px',
-        color: CSS_COLORS.muted,
-      },
-    )
-      .setOrigin(0, 1)
-      .setAlpha(0.34);
-
-    this.p2Controls = this.createText(
-      GAME_WIDTH - BAR_X,
-      691,
-      'P2  LEFT/RIGHT MOVE   UP JUMP   DOWN CROUCH   J LIGHT   K HEAVY   O BLOCK   U/I SPECIAL   P DODGE',
-      {
-        fontFamily: FONTS.mono,
-        fontSize: '9px',
-        color: CSS_COLORS.muted,
-      },
-    )
-      .setOrigin(1, 1)
-      .setAlpha(0.34);
+      fontSize: '18px',
+      color: toCssColor(COLORS.emberOrange),
+      stroke: '#000000',
+      strokeThickness: 4,
+    }).setOrigin(1, 0).setDepth(DEPTH).setVisible(false);
   }
 
-  update(players: readonly [HudFighterSnapshot, HudFighterSnapshot], deltaMs: number): void {
-    this.p1Name.setText(players[0].name).setColor(toCssColor(players[0].color));
-    this.p2Name.setText(players[1].name).setColor(toCssColor(players[1].color));
-    this.p1Label.setColor(toCssColor(players[0].color));
-    this.p2Label.setColor(toCssColor(players[1].color));
-    this.versusText.setText(`${players[0].name}   VS   ${players[1].name}`);
-
-    if (!this.healthInitialized) {
-      this.displayedHealth = [players[0].health, players[1].health];
-      this.chipHealth = [players[0].health, players[1].health];
-      this.displayedEnergy = [players[0].energy, players[1].energy];
-      this.healthInitialized = true;
-    }
-
-    const fastFactor = 1 - Math.exp(-deltaMs / 70);
-    const slowFactor = 1 - Math.exp(-deltaMs / 280);
-    const energyFactor = 1 - Math.exp(-deltaMs / 140);
-
-    for (let index = 0; index < 2; index += 1) {
-      const player = players[index];
-      if (!player) {
-        continue;
-      }
-      const target = Phaser.Math.Clamp(player.health, 0, player.maxHealth);
-      let displayed = this.displayedHealth[index] ?? target;
-      let chip = this.chipHealth[index] ?? target;
-
-      if (target > displayed) {
-        displayed = target;
-        chip = target;
-      } else {
-        displayed += (target - displayed) * fastFactor;
-        chip += (target - chip) * slowFactor;
-        if (chip < displayed) {
-          chip = displayed;
-        }
-      }
-
-      this.displayedHealth[index] = displayed;
-      this.chipHealth[index] = chip;
-
-      const energyTarget = Phaser.Math.Clamp(player.energy, 0, player.maxEnergy);
-      const displayedEnergy = this.displayedEnergy[index] ?? energyTarget;
-      this.displayedEnergy[index] =
-        displayedEnergy + (energyTarget - displayedEnergy) * energyFactor;
-    }
-
-    this.p1Health.setText(`${Math.max(0, Math.ceil(players[0].health))}`);
-    this.p2Health.setText(`${Math.max(0, Math.ceil(players[1].health))}`);
-    this.p1Health.setColor(players[0].blocking ? toCssColor(COLORS.violet) : CSS_COLORS.muted);
-    this.p2Health.setColor(players[1].blocking ? toCssColor(COLORS.violet) : CSS_COLORS.muted);
-
-    this.updateDodgeLabel(this.p1Dodge, players[0]);
-    this.updateDodgeLabel(this.p2Dodge, players[1]);
-
-    this.drawBars(players);
-  }
-
-  showCombo(playerNumber: 1 | 2, hits: number, damage: number): void {
-    const text = playerNumber === 1 ? this.p1Combo : this.p2Combo;
-    const color = playerNumber === 1 ? COLORS.cyan : COLORS.emberOrange;
-
-    this.scene.tweens.killTweensOf(text);
-    text
-      .setText(`${hits} HIT${hits === 1 ? '' : 'S'}  //  ${damage} DMG`)
-      .setColor(toCssColor(color))
-      .setVisible(true)
-      .setAlpha(1)
-      .setScale(1.16);
-
-    this.scene.tweens.add({
-      targets: text,
-      scaleX: 1,
-      scaleY: 1,
-      duration: 150,
-      ease: 'Back.easeOut',
-    });
-  }
-
-  clearCombo(playerNumber: 1 | 2): void {
-    const text = playerNumber === 1 ? this.p1Combo : this.p2Combo;
-    this.scene.tweens.killTweensOf(text);
-    this.scene.tweens.add({
-      targets: text,
-      alpha: 0,
-      duration: 220,
-      ease: 'Sine.easeIn',
-      onComplete: () => text.setVisible(false),
-    });
-  }
-
-  showNotice(text: string, color: number): void {
-    this.scene.tweens.killTweensOf(this.notice);
-    this.notice
-      .setText(text)
-      .setColor(toCssColor(color))
-      .setVisible(true)
-      .setAlpha(1)
-      .setScale(1.12);
-    this.notice.setShadow(0, 0, toCssColor(color), 24, true, true);
-
-    this.scene.tweens.add({
-      targets: this.notice,
-      scaleX: 1,
-      scaleY: 1,
-      duration: 130,
-      ease: 'Back.easeOut',
-    });
-    this.scene.tweens.add({
-      targets: this.notice,
-      alpha: 0,
-      delay: 720,
-      duration: 240,
-      ease: 'Sine.easeIn',
-      onComplete: () => this.notice.setVisible(false),
-    });
-  }
-
-  setPhaseLabel(label: string): void {
-    if (label === this.currentPhaseLabel) {
-      return;
-    }
-
-    this.currentPhaseLabel = label;
-    this.phaseText.setText(label);
-    const color =
-      label === 'FIGHT' || label === 'K.O.'
-        ? COLORS.crimson
-        : label === 'MATCH COMPLETE' || label === 'DOUBLE K.O.'
-          ? COLORS.gold
-          : COLORS.bone;
-    this.phaseText.setColor(toCssColor(color));
-  }
-
-  setAnnouncement(text: string | null): void {
-    if (text === this.currentAnnouncement) {
-      return;
-    }
-
-    this.currentAnnouncement = text;
-    this.scene.tweens.killTweensOf(this.announcement);
-    this.scene.tweens.killTweensOf(this.versusText);
-
-    if (!text) {
-      this.versusText.setVisible(false);
-      this.scene.tweens.add({
-        targets: this.announcement,
-        alpha: 0,
-        duration: 150,
-        ease: 'Sine.easeIn',
-        onComplete: () => {
-          if (this.currentAnnouncement === null) {
-            this.announcement.setVisible(false);
-          }
-        },
-      });
-      return;
-    }
-
-    const color = text === 'READY' ? COLORS.bone : COLORS.crimson;
-    this.announcement
-      .setText(text)
-      .setColor(toCssColor(color))
-      .setVisible(true)
-      .setAlpha(0)
-      .setScale(1.35);
-    this.announcement.setShadow(0, 0, toCssColor(color), 36, true, true);
-
-    this.scene.tweens.add({
-      targets: this.announcement,
-      alpha: 1,
-      scaleX: 1,
-      scaleY: 1,
-      duration: 240,
-      ease: 'Back.easeOut',
-    });
-
-    if (text === 'READY' || text === 'FIGHT') {
-      this.versusText.setVisible(true).setAlpha(0);
-      this.scene.tweens.add({
-        targets: this.versusText,
-        alpha: 0.8,
-        duration: 260,
-        ease: 'Sine.easeOut',
-      });
-    } else {
-      this.versusText.setVisible(false);
-    }
-  }
-
-  setSideLabels(p1Label: string, p2Label: string): void {
-    this.p1Label.setText(p1Label);
-    this.p2Label.setText(p2Label);
+  setSideLabels(p1: string, p2: string): void {
+    this.p1Label.setText(p1);
+    this.p2Label.setText(p2);
   }
 
   setControlHints(p1: string, p2: string): void {
-    this.p1Controls.setText(p1);
-    this.p2Controls.setText(p2);
+    this.controlHint1.setText(p1);
+    this.controlHint2.setText(p2);
   }
 
-  private drawBars(players: readonly [HudFighterSnapshot, HudFighterSnapshot]): void {
-    const graphics = this.barGraphics;
-    graphics.clear();
-
-    const p1Ratio = this.getRatio(players[0], 0);
-    const p2Ratio = this.getRatio(players[1], 1);
-    const p1ChipRatio = this.getChipRatio(players[0], 0);
-    const p2ChipRatio = this.getChipRatio(players[1], 1);
-
-    this.drawFrame(graphics, BAR_X, players[0].color);
-    this.drawFrame(graphics, P2_BAR_X, players[1].color);
-
-    this.drawFill(graphics, BAR_X, BAR_WIDTH, players[0].color, p1Ratio, p1ChipRatio, false);
-    this.drawFill(graphics, P2_BAR_X, BAR_WIDTH, players[1].color, p2Ratio, p2ChipRatio, true);
-
-    this.drawEnergyBar(graphics, BAR_X, players[0], 0, false);
-    this.drawEnergyBar(graphics, P2_BAR_X, players[1], 1, true);
-
-    graphics.fillStyle(COLORS.gold, 0.85);
-    graphics.fillTriangle(
-      GAME_WIDTH / 2,
-      BAR_Y + 2,
-      GAME_WIDTH / 2 + 9,
-      BAR_Y + BAR_HEIGHT / 2,
-      GAME_WIDTH / 2,
-      BAR_Y + BAR_HEIGHT - 2,
-    );
-    graphics.fillTriangle(
-      GAME_WIDTH / 2,
-      BAR_Y + 2,
-      GAME_WIDTH / 2 - 9,
-      BAR_Y + BAR_HEIGHT / 2,
-      GAME_WIDTH / 2,
-      BAR_Y + BAR_HEIGHT - 2,
-    );
-    graphics.lineStyle(1, COLORS.line, 0.7);
-    graphics.strokeCircle(GAME_WIDTH / 2, BAR_Y + BAR_HEIGHT / 2, 14);
-
-    graphics.lineStyle(1, players[0].color, 0.45);
-    graphics.lineBetween(BAR_X, BAR_Y - 6, BAR_X + 70, BAR_Y - 6);
-    graphics.lineStyle(1, players[1].color, 0.45);
-    graphics.lineBetween(GAME_WIDTH - BAR_X, BAR_Y - 6, GAME_WIDTH - BAR_X - 70, BAR_Y - 6);
+  setPhaseLabel(label: string): void {
+    this.phaseLabel.setText(label.toUpperCase());
   }
 
-  private drawFrame(graphics: Phaser.GameObjects.Graphics, x: number, color: number): void {
-    graphics.fillStyle(0x050408, 0.88);
-    graphics.fillRect(
-      x - BAR_GAP,
-      BAR_Y - BAR_GAP,
-      BAR_WIDTH + BAR_GAP * 2,
-      BAR_HEIGHT + BAR_GAP * 2,
-    );
-    graphics.lineStyle(1, COLORS.line, 0.85);
-    graphics.strokeRect(
-      x - BAR_GAP,
-      BAR_Y - BAR_GAP,
-      BAR_WIDTH + BAR_GAP * 2,
-      BAR_HEIGHT + BAR_GAP * 2,
-    );
-    graphics.lineStyle(1, color, 0.4);
-    graphics.strokeRect(x, BAR_Y, BAR_WIDTH, BAR_HEIGHT);
-    graphics.fillStyle(0x0d0812, 1);
-    graphics.fillRect(x, BAR_Y, BAR_WIDTH, BAR_HEIGHT);
-  }
-
-  private drawFill(
-    graphics: Phaser.GameObjects.Graphics,
-    x: number,
-    width: number,
-    color: number,
-    ratio: number,
-    chipRatio: number,
-    mirrored: boolean,
-  ): void {
-    const chipWidth = width * chipRatio;
-    const fillWidth = width * ratio;
-
-    if (chipWidth > 0) {
-      graphics.fillStyle(COLORS.bone, 0.38);
-      graphics.fillRect(mirrored ? x + width - chipWidth : x, BAR_Y, chipWidth, BAR_HEIGHT);
-    }
-
-    if (fillWidth > 0) {
-      const lowHealth = ratio <= 0.25;
-      const pulse = lowHealth ? 0.78 + Math.sin(this.scene.time.now / 95) * 0.22 : 1;
-      graphics.fillStyle(color, pulse);
-      graphics.fillRect(mirrored ? x + width - fillWidth : x, BAR_Y, fillWidth, BAR_HEIGHT);
-
-      graphics.fillStyle(0xffffff, 0.16);
-      graphics.fillRect(mirrored ? x + width - fillWidth : x, BAR_Y, fillWidth, 3);
-    }
-
-    graphics.lineStyle(1, 0x050408, 0.6);
-    for (let segment = 1; segment < 10; segment += 1) {
-      const segmentX = x + (width / 10) * segment;
-      graphics.lineBetween(segmentX, BAR_Y, segmentX, BAR_Y + BAR_HEIGHT);
-    }
-  }
-
-  private drawEnergyBar(
-    graphics: Phaser.GameObjects.Graphics,
-    x: number,
-    player: HudFighterSnapshot,
-    index: number,
-    mirrored: boolean,
-  ): void {
-    const ratio =
-      player.maxEnergy <= 0
-        ? 0
-        : Phaser.Math.Clamp((this.displayedEnergy[index] ?? 0) / player.maxEnergy, 0, 1);
-
-    graphics.fillStyle(0x050408, 0.9);
-    graphics.fillRect(x, ENERGY_Y, BAR_WIDTH, ENERGY_HEIGHT);
-    graphics.lineStyle(1, COLORS.line, 0.9);
-    graphics.strokeRect(x, ENERGY_Y, BAR_WIDTH, ENERGY_HEIGHT);
-
-    const fillWidth = BAR_WIDTH * ratio;
-    if (fillWidth > 0) {
-      graphics.fillStyle(COLORS.violet, 0.92);
-      graphics.fillRect(
-        mirrored ? x + BAR_WIDTH - fillWidth : x,
-        ENERGY_Y,
-        fillWidth,
-        ENERGY_HEIGHT,
-      );
-      graphics.fillStyle(COLORS.pearl, 0.32);
-      graphics.fillRect(mirrored ? x + BAR_WIDTH - fillWidth : x, ENERGY_Y, fillWidth, 2);
-    }
-
-    graphics.lineStyle(1, player.color, 0.35);
-    graphics.strokeRect(x, ENERGY_Y, BAR_WIDTH, ENERGY_HEIGHT);
-
-    graphics.lineStyle(1, 0x050408, 0.5);
-    for (let segment = 1; segment < 4; segment += 1) {
-      const segmentX = x + (BAR_WIDTH / 4) * segment;
-      graphics.lineBetween(segmentX, ENERGY_Y, segmentX, ENERGY_Y + ENERGY_HEIGHT);
-    }
-  }
-
-  private updateDodgeLabel(text: Phaser.GameObjects.Text, player: HudFighterSnapshot): void {
-    if (player.dodgeCooldownFrames <= 0) {
-      text.setText('DODGE READY').setColor(toCssColor(COLORS.violet)).setAlpha(0.85);
+  setAnnouncement(text: 'READY' | 'FIGHT' | 'K.O.' | 'TIME' | null): void {
+    if (!text) {
+      this.announcementText.setVisible(false);
       return;
     }
-
-    text
-      .setText(`DODGE ${Math.ceil(player.dodgeCooldownFrames)}F`)
-      .setColor(CSS_COLORS.muted)
-      .setAlpha(0.5);
+    const color = text === 'K.O.' || text === 'TIME' ? CSS_COLORS.crimson : CSS_COLORS.bone;
+    this.announcementText.setColor(color).setText(text).setVisible(true).setAlpha(1).setScale(1);
   }
 
-  private getRatio(player: HudFighterSnapshot, index: number): number {
-    const displayed = this.displayedHealth[index] ?? 0;
-    return player.maxHealth <= 0 ? 0 : Phaser.Math.Clamp(displayed / player.maxHealth, 0, 1);
+  setTimer(seconds: number | null): void {
+    if (seconds === null) {
+      this.timerText.setText('--').setColor(CSS_COLORS.muted);
+      return;
+    }
+    const clamped = Math.max(0, Math.floor(seconds));
+    this.timerText.setText(String(clamped).padStart(2, '0'));
+    this.timerText.setColor(clamped <= 10 ? CSS_COLORS.crimson : CSS_COLORS.bone);
   }
 
-  private getChipRatio(player: HudFighterSnapshot, index: number): number {
-    const chip = this.chipHealth[index] ?? 0;
-    return player.maxHealth <= 0 ? 0 : Phaser.Math.Clamp(chip / player.maxHealth, 0, 1);
+  setRoundInfo(currentRound: number, p1Wins: number, p2Wins: number, roundsToWin: number): void {
+    this.roundText.setText(
+      `ROUND ${String(currentRound).padStart(2, '0')}  •  ${p1Wins} - ${p2Wins}  (FT${roundsToWin})`,
+    );
   }
 
-  private createText(
+  showNotice(text: string, color: number = COLORS.bone): void {
+    this.noticeText.setText(text).setColor(toCssColor(color)).setVisible(true).setAlpha(1);
+    this.noticeTimer = 900;
+  }
+
+  showCombo(playerNumber: 1 | 2, hits: number, damage: number): void {
+    if (hits < 2) return;
+    const text = playerNumber === 1 ? this.p1ComboText : this.p2ComboText;
+    text.setText(`${hits} HITS  ${damage}`).setVisible(true).setAlpha(1);
+    this.comboTimers[playerNumber - 1] = 1200;
+  }
+
+  clearCombo(playerNumber: 1 | 2): void {
+    const text = playerNumber === 1 ? this.p1ComboText : this.p2ComboText;
+    text.setVisible(false);
+    this.comboTimers[playerNumber - 1] = 0;
+  }
+
+  update(players: readonly [HudFighterSnapshot, HudFighterSnapshot], deltaMs: number): void {
+    const [p1, p2] = players;
+    this.updateValues(p1, p2, deltaMs);
+    this.drawBars(p1, p2);
+    this.updateTransientText(deltaMs);
+  }
+
+  destroy(): void {
+    this.bars.destroy();
+    this.p1Label.destroy();
+    this.p2Label.destroy();
+    this.timerText.destroy();
+    this.roundText.destroy();
+    this.phaseLabel.destroy();
+    this.announcementText.destroy();
+    this.controlHint1.destroy();
+    this.controlHint2.destroy();
+    this.noticeText.destroy();
+    this.p1ComboText.destroy();
+    this.p2ComboText.destroy();
+  }
+
+  private updateValues(p1: HudFighterSnapshot, p2: HudFighterSnapshot, deltaMs: number): void {
+    const lerp = Math.min(1, deltaMs * 0.012);
+    const lagLerp = Math.min(1, deltaMs * 0.0045);
+
+    this.p1HealthCurrent = Phaser.Math.Linear(this.p1HealthCurrent, p1.health, lerp);
+    this.p2HealthCurrent = Phaser.Math.Linear(this.p2HealthCurrent, p2.health, lerp);
+    this.p1HealthLag = Phaser.Math.Linear(this.p1HealthLag, p1.health, lagLerp);
+    this.p2HealthLag = Phaser.Math.Linear(this.p2HealthLag, p2.health, lagLerp);
+    this.p1EnergyCurrent = Phaser.Math.Linear(this.p1EnergyCurrent, p1.energy, lerp);
+    this.p2EnergyCurrent = Phaser.Math.Linear(this.p2EnergyCurrent, p2.energy, lerp);
+
+    const p1Dodge = p1.dodgeCooldownMaxFrames > 0 ? 1 - p1.dodgeCooldownFrames / p1.dodgeCooldownMaxFrames : 1;
+    const p2Dodge = p2.dodgeCooldownMaxFrames > 0 ? 1 - p2.dodgeCooldownFrames / p2.dodgeCooldownMaxFrames : 1;
+    this.p1DodgeRatio = Phaser.Math.Linear(this.p1DodgeRatio, Phaser.Math.Clamp(p1Dodge, 0, 1), lerp);
+    this.p2DodgeRatio = Phaser.Math.Linear(this.p2DodgeRatio, Phaser.Math.Clamp(p2Dodge, 0, 1), lerp);
+  }
+
+  private drawBars(p1: HudFighterSnapshot, p2: HudFighterSnapshot): void {
+    const g = this.bars;
+    g.clear();
+
+    this.drawPlayerBars(g, BAR_X, 1, p1, this.p1HealthCurrent, this.p1HealthLag, this.p1EnergyCurrent, this.p1DodgeRatio);
+    this.drawPlayerBars(g, P2_BAR_X, -1, p2, this.p2HealthCurrent, this.p2HealthLag, this.p2EnergyCurrent, this.p2DodgeRatio);
+  }
+
+  private drawPlayerBars(
+    g: Phaser.GameObjects.Graphics,
+    x: number,
+    dir: 1 | -1,
+    fighter: HudFighterSnapshot,
+    health: number,
+    lag: number,
+    energy: number,
+    dodgeRatio: number,
+  ): void {
+    const maxH = Math.max(1, fighter.maxHealth);
+    const maxE = Math.max(1, fighter.maxEnergy);
+    const healthRatio = Phaser.Math.Clamp(health / maxH, 0, 1);
+    const lagRatio = Phaser.Math.Clamp(lag / maxH, 0, 1);
+    const energyRatio = Phaser.Math.Clamp(energy / maxE, 0, 1);
+
+    // background
+    g.fillStyle(0x0b0810, 0.9);
+    g.fillRect(x, BAR_Y, BAR_WIDTH, BAR_HEIGHT);
+    g.lineStyle(1, COLORS.line, 0.8);
+    g.strokeRect(x, BAR_Y, BAR_WIDTH, BAR_HEIGHT);
+
+    // lag
+    g.fillStyle(COLORS.crimsonDeep, 0.75);
+    this.fillBar(g, x, BAR_Y + 2, BAR_WIDTH, BAR_HEIGHT - 4, lagRatio, dir);
+
+    // health
+    g.fillStyle(fighter.color, 0.95);
+    this.fillBar(g, x, BAR_Y + 2, BAR_WIDTH, BAR_HEIGHT - 4, healthRatio, dir);
+
+    // block indicator overlay
+    if (fighter.blocking) {
+      g.lineStyle(2, COLORS.gold, 0.55);
+      g.strokeRect(x - 1, BAR_Y - 1, BAR_WIDTH + 2, BAR_HEIGHT + 2);
+    }
+
+    // energy
+    g.fillStyle(0x0b0810, 0.9);
+    g.fillRect(x, ENERGY_Y, BAR_WIDTH, ENERGY_HEIGHT);
+    g.fillStyle(COLORS.violet, 0.9);
+    this.fillBar(g, x, ENERGY_Y + 1, BAR_WIDTH, ENERGY_HEIGHT - 2, energyRatio, dir);
+
+    // dodge cooldown
+    g.fillStyle(0x0b0810, 0.9);
+    g.fillRect(x, DODGE_Y, BAR_WIDTH, 4);
+    g.fillStyle(dodgeRatio >= 1 ? COLORS.cyan : COLORS.muted, 0.85);
+    this.fillBar(g, x, DODGE_Y, BAR_WIDTH, 4, dodgeRatio, dir);
+  }
+
+  private fillBar(
+    g: Phaser.GameObjects.Graphics,
     x: number,
     y: number,
-    text: string,
-    style: Phaser.Types.GameObjects.Text.TextStyle,
-  ): Phaser.GameObjects.Text {
-    return this.scene.add.text(x, y, text, style).setDepth(DEPTH + 1);
+    width: number,
+    height: number,
+    ratio: number,
+    dir: 1 | -1,
+  ): void {
+    const w = Math.max(0, Math.floor(width * ratio));
+    if (w <= 0) return;
+    if (dir === 1) {
+      g.fillRect(x, y, w, height);
+    } else {
+      g.fillRect(x + width - w, y, w, height);
+    }
+  }
+
+  private updateTransientText(deltaMs: number): void {
+    if (this.noticeTimer > 0) {
+      this.noticeTimer -= deltaMs;
+      if (this.noticeTimer <= 0) {
+        this.noticeText.setVisible(false);
+      } else if (this.noticeTimer < 250) {
+        this.noticeText.setAlpha(this.noticeTimer / 250);
+      }
+    }
+
+    for (let i = 0; i < 2; i += 1) {
+      const timer = this.comboTimers[i] ?? 0;
+      if (timer <= 0) continue;
+      this.comboTimers[i] = timer - deltaMs;
+      const text = i === 0 ? this.p1ComboText : this.p2ComboText;
+      const remaining = this.comboTimers[i] ?? 0;
+      if (remaining <= 0) {
+        text.setVisible(false);
+      } else if (remaining < 300) {
+        text.setAlpha(remaining / 300);
+      }
+    }
   }
 }

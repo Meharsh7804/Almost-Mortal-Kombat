@@ -52,7 +52,22 @@ describe('game configuration', () => {
       'BootScene',
       'PreloadScene',
       'MenuScene',
+      'ModeSelectScene',
+      'CpuConfigScene',
+      'CharacterSelectScene',
+      'ArenaSelectScene',
+      'VersusScene',
       'BattleScene',
+      'ResultsScene',
+      'SettingsScene',
+      'HowToPlayScene',
+      'ArcadeScene',
+      'ArcadeProgressScene',
+      'ArcadeEndingScene',
+      'PlayerProfileScene',
+      'MasteryScene',
+      'AchievementScene',
+      'CollectionScene',
     ]);
   });
 

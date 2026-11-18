@@ -1,10 +1,9 @@
 /**
  * Single source of truth for externally loaded assets.
  *
- * Phase 0 intentionally ships with zero external assets: every visual in the
- * foundation is generated procedurally at runtime. Future phases register
- * character, arena, effect, audio and UI files here so no asset URL is
- * hard-coded in scenes.
+ * The game ships with procedural visuals and no bundled audio files. Audio keys
+ * are played only when present in the cache, so missing assets are safe. To add
+ * audio, place files under `public/assets/audio/` and register them here.
  */
 
 export type AssetKind = 'image' | 'audio' | 'json';

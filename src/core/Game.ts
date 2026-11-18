@@ -3,9 +3,26 @@ import Phaser from 'phaser';
 import { BattleScene } from '../scenes/BattleScene';
 import { BootScene } from '../scenes/BootScene';
 import { MenuScene } from '../scenes/MenuScene';
+import { ArenaSelectScene } from '../scenes/ArenaSelectScene';
+import { CharacterSelectScene } from '../scenes/CharacterSelectScene';
+import { CpuConfigScene } from '../scenes/CpuConfigScene';
+import { HowToPlayScene } from '../scenes/HowToPlayScene';
+import { ModeSelectScene } from '../scenes/ModeSelectScene';
 import { PreloadScene } from '../scenes/PreloadScene';
+import { ResultsScene } from '../scenes/ResultsScene';
+import { SettingsScene } from '../scenes/SettingsScene';
+import { VersusScene } from '../scenes/VersusScene';
+import { ArcadeScene } from '../scenes/ArcadeScene';
+import { ArcadeProgressScene } from '../scenes/ArcadeProgressScene';
+import { ArcadeEndingScene } from '../scenes/ArcadeEndingScene';
+import { PlayerProfileScene } from '../scenes/PlayerProfileScene';
+import { MasteryScene } from '../scenes/MasteryScene';
+import { AchievementScene } from '../scenes/AchievementScene';
+import { CollectionScene } from '../scenes/CollectionScene';
+import { AUDIO_REGISTRY_KEY, AudioManager } from '../audio/AudioManager';
 import { GAME_CONFIG } from './GameConfig';
 import { GAME_LOOP_REGISTRY_KEY, GameLoop } from './GameLoop';
+import { getOrLoadProfile } from '../progression/ProgressionService';
 
 /**
  * Phaser bootstrap and ownership boundary for the engine.
@@ -62,10 +79,31 @@ export class Game {
         transparent: false,
         powerPreference: 'high-performance',
       },
-      scene: [BootScene, PreloadScene, MenuScene, BattleScene],
+      scene: [
+        BootScene,
+        PreloadScene,
+        MenuScene,
+        ModeSelectScene,
+        CpuConfigScene,
+        CharacterSelectScene,
+        ArenaSelectScene,
+        VersusScene,
+        BattleScene,
+        ResultsScene,
+        SettingsScene,
+        HowToPlayScene,
+        ArcadeScene,
+        ArcadeProgressScene,
+        ArcadeEndingScene,
+        PlayerProfileScene,
+        MasteryScene,
+        AchievementScene,
+        CollectionScene,
+      ],
       callbacks: {
         preBoot: (game) => {
           game.registry.set(GAME_LOOP_REGISTRY_KEY, this.loop);
+          game.registry.set(AUDIO_REGISTRY_KEY, new AudioManager(getOrLoadProfile().settings));
           game.events.on(Phaser.Core.Events.PRE_STEP, this.handlePreStep);
         },
       },

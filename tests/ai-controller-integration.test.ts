@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { AIController } from '../src/ai/AIController';
 import { CombatEngine } from '../src/combat/CombatEngine';
-import { InputManager } from '../src/controllers/InputManager';
+import { InputManager, type InputSnapshot } from '../src/controllers/InputManager';
 import { ENERGY_BLAST } from '../src/combat/FrameData';
 import { ARENA_BOUNDS } from '../src/data/ArenaConfig';
 import { createFighter } from './helpers';
@@ -44,7 +44,7 @@ function stepControlledMatch(options: { seed: number; difficulty?: 'EASY' | 'NOR
   return { aiFighter, humanFighter, combat, ai };
 }
 
-function toControls(snapshot: { held: any; pressed: any }) {
+function toControls(snapshot: InputSnapshot) {
   return {
     moveLeft: snapshot.held.left,
     moveRight: snapshot.held.right,

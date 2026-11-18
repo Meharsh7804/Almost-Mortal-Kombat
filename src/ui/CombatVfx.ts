@@ -454,4 +454,16 @@ export class CombatVfx {
       })
       .setDepth(depth);
   }
+
+  destroy(): void {
+    this.projectileGraphics.destroy();
+    this.blockEmitter.destroy();
+    this.guardEmitter.destroy();
+    this.dodgeEmitter.destroy();
+    this.dustEmitter.destroy();
+    for (const impact of this.impacts) {
+      impact.graphics.destroy();
+    }
+    this.seenProjectiles.clear();
+  }
 }
