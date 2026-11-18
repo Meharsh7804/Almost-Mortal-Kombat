@@ -97,8 +97,8 @@ export class BattleScene extends Phaser.Scene {
     const elapsed = this.loop?.simulationTimeSeconds ?? 0;
     const fighters = this.match.fighters;
 
-    this.fighterViews[0].update(deltaMs, elapsed);
-    this.fighterViews[1].update(deltaMs, elapsed);
+    this.fighterViews[0].render(elapsed);
+    this.fighterViews[1].render(elapsed);
 
     const p1 = this.toHudSnapshot(fighters[0]);
     const p2 = this.toHudSnapshot(fighters[1]);
@@ -108,7 +108,10 @@ export class BattleScene extends Phaser.Scene {
 
     this.combatVfx?.update(this.match.activeProjectiles, elapsed);
     this.backdrop.update(elapsed);
-    this.debugOverlay?.update(fighters, this.match.activeProjectiles);
+    this.debugOverlay?.update(fighters, this.match.activeProjectiles, [
+      this.fighterViews[0].getDebugSnapshot(),
+      this.fighterViews[1].getDebugSnapshot(),
+    ]);
 
     if (!this.resultShown && this.match.resultVisible) {
       this.resultShown = true;
@@ -121,6 +124,9 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
+    // Hitstop freezes simulation state, so animation clocks must freeze with
+    // it. Everything else advances exactly once per fixed tick.
+    const frozen = this.match.hitstopActive;
     const inputs = this.inputManager.poll();
     const result = this.match.update(inputs);
 
@@ -129,7 +135,50 @@ export class BattleScene extends Phaser.Scene {
     for (const hit of result.hits) {
       this.handleHit(hit);
     }
+
+    this.syncVictoryPose();
+
+    if (!frozen) {
+      this.tickFighterAnimation(0);
+      this.tickFighterAnimation(1);
+    }
   };
+
+  private tickFighterAnimation(index: 0 | 1): void {
+    const views = this.fighterViews;
+    if (!views) {
+      return;
+    }
+
+    const view = views[index];
+    const tick = view.tickSimulation();
+
+    if (tick.knockdownLanding) {
+      this.combatVfx?.knockdownDust(
+        view.fighter.x,
+        ARENA_BOUNDS.groundY,
+        view.fighter.config.color,
+      );
+    } else if (tick.landed) {
+      this.combatVfx?.landingDust(
+        view.fighter.x,
+        ARENA_BOUNDS.groundY,
+        view.fighter.config.color,
+      );
+    }
+  }
+
+  private syncVictoryPose(): void {
+    if (!this.match || !this.fighterViews) {
+      return;
+    }
+
+    const winner = this.match.matchPhase === 'FINISHED' ? this.match.winner : null;
+    const settled = winner !== null && this.match.finishedTicks >= 32;
+
+    this.fighterViews[0].setVictory(settled && winner === this.match.fighters[0]);
+    this.fighterViews[1].setVictory(settled && winner === this.match.fighters[1]);
+  }
 
   private handleCombatEvents(events: readonly CombatEvent[]): void {
     for (const event of events) {
@@ -147,6 +196,7 @@ export class BattleScene extends Phaser.Scene {
         case 'PERFECT_GUARD': {
           const defender = this.findFighter(event.fighterId);
           if (defender) {
+            this.fighterViews?.[defender.playerNumber === 1 ? 0 : 1].playPerfectGuard();
             this.combatVfx?.perfectGuard(defender.x, defender.y - 92, defender.config.color);
             this.hud?.showNotice('PERFECT GUARD', COLORS.violet);
           }
@@ -160,9 +210,29 @@ export class BattleScene extends Phaser.Scene {
           }
           this.hud?.showCombo(attacker.playerNumber, event.hits, event.damage);
           if (event.hits >= 2) {
+            const victim = this.findFighter(event.victimId);
+            if (victim) {
+              this.combatVfx?.comboBurst(
+                victim.x,
+                victim.y - 104,
+                attacker.config.color,
+                event.hits,
+              );
+            }
             this.hud?.showNotice(
               `${event.hits} HIT COMBO`,
               attacker.playerNumber === 1 ? COLORS.cyan : COLORS.emberOrange,
+            );
+          }
+          break;
+        }
+        case 'FIGHTER_DEFEATED': {
+          const fighter = this.findFighter(event.fighterId);
+          if (fighter) {
+            this.combatVfx?.defeatBurst(
+              fighter.x,
+              fighter.y - 92,
+              fighter.config.color,
             );
           }
           break;
@@ -205,6 +275,14 @@ export class BattleScene extends Phaser.Scene {
 
     const victimIndex = hit.victim.playerNumber === 1 ? 0 : 1;
     this.fighterViews[victimIndex].triggerHitFlash();
+
+    const heavy = hit.attack.category !== 'LIGHT' || hit.attack.causesKnockdown;
+    this.combatVfx?.hitImpact(
+      hit.impactX,
+      hit.impactY,
+      hit.victim.config.color,
+      heavy ? 1 : 0.55,
+    );
 
     const sparks = hit.attacker.playerNumber === 1 ? this.hitSparks?.[0] : this.hitSparks?.[1];
     sparks?.emitParticleAt(hit.impactX, hit.impactY, hit.attack.causesKnockdown ? 16 : 8);

@@ -1,5 +1,6 @@
 import type Phaser from 'phaser';
 
+import type { FighterAnimatorDebug } from '../animation/FighterAnimator';
 import type { Projectile } from '../combat/ProjectileSystem';
 import { ARENA_BOUNDS } from '../data/ArenaConfig';
 import type { Fighter } from '../entities/Fighter';
@@ -13,6 +14,15 @@ const COLORS_DEBUG = {
   projectile: 0xff4de0,
 } as const;
 
+export interface FighterDebugInfo extends FighterAnimatorDebug {
+  readonly playerNumber: 1 | 2;
+  readonly state: string;
+  readonly attackId: string | null;
+  readonly facing: 1 | -1;
+  readonly velocityX: number;
+  readonly velocityY: number;
+}
+
 /**
  * Development-only collision visualization. Draws on top of fighters, never
  * participates in collision and can be toggled without pausing the match.
@@ -20,6 +30,8 @@ const COLORS_DEBUG = {
 export class DebugOverlay {
   private readonly graphics: Phaser.GameObjects.Graphics;
   private readonly label: Phaser.GameObjects.Text;
+  private readonly animLabel: Phaser.GameObjects.Text;
+  private lastAnimSignature = '';
   private enabled = false;
 
   constructor(scene: Phaser.Scene) {
@@ -35,6 +47,19 @@ export class DebugOverlay {
       .setAlpha(0.7)
       .setDepth(81)
       .setVisible(false);
+
+    this.animLabel = scene.add
+      .text(20, 142, '', {
+        fontFamily: FONTS.mono,
+        fontSize: '10px',
+        color: CSS_COLORS.muted,
+        lineSpacing: 5,
+        backgroundColor: 'rgba(4, 7, 12, 0.78)',
+      })
+      .setPadding(7, 6, 9, 6)
+      .setAlpha(0.94)
+      .setDepth(81)
+      .setVisible(false);
   }
 
   get isEnabled(): boolean {
@@ -44,8 +69,11 @@ export class DebugOverlay {
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
     this.label.setVisible(enabled);
+    this.animLabel.setVisible(enabled);
     if (!enabled) {
       this.graphics.clear();
+      this.animLabel.setText('');
+      this.lastAnimSignature = '';
     }
   }
 
@@ -53,10 +81,16 @@ export class DebugOverlay {
     this.setEnabled(!this.enabled);
   }
 
-  update(fighters: readonly [Fighter, Fighter], projectiles: readonly Projectile[] = []): void {
+  update(
+    fighters: readonly [Fighter, Fighter],
+    projectiles: readonly Projectile[] = [],
+    animations: readonly FighterDebugInfo[] = [],
+  ): void {
     if (!this.enabled) {
       return;
     }
+
+    this.updateAnimationPanel(animations);
 
     const graphics = this.graphics;
     graphics.clear();
@@ -128,6 +162,29 @@ export class DebugOverlay {
         COLORS_DEBUG.projectile,
         0.14,
       );
+    }
+  }
+
+  private updateAnimationPanel(animations: readonly FighterDebugInfo[]): void {
+    if (animations.length === 0) {
+      return;
+    }
+
+    const lines = animations.map((info) => {
+      const mode = info.loop ? 'LOOP' : info.complete ? 'DONE' : 'ONCE';
+      const key = info.key.length > 24 ? `${info.key.slice(0, 23)}~` : info.key;
+      return [
+        `P${info.playerNumber} ${info.state.padEnd(14)} ANIM ${info.animation.padEnd(13)}`,
+        `  ${String(info.priority).padStart(4)}  ${info.elapsedFrames}/${info.durationFrames} ${mode}`,
+        `  F${info.facing > 0 ? '+' : '-'} VX ${Math.round(info.velocityX)} VY ${Math.round(info.velocityY)}`,
+        `  ATK ${info.attackId ?? '-'}  KEY ${key}`,
+      ].join('\n');
+    });
+
+    const text = `ANIMATION DEBUG\n${lines.join('\n')}`;
+    if (text !== this.lastAnimSignature) {
+      this.lastAnimSignature = text;
+      this.animLabel.setText(text);
     }
   }
 
