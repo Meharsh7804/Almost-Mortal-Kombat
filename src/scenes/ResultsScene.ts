@@ -104,7 +104,7 @@ export class ResultsScene extends Phaser.Scene {
     if (!this.resultsData.arcade || this.resultsData.config.mode !== 'ARCADE') {
       return [
         { label: 'REMATCH', onClick: () => this.go(SCENE_KEYS.BATTLE, { matchConfig: this.resultsData.config, matchToken: this.newMatchToken() }) },
-        { label: 'CHANGE FIGHTERS', onClick: () => this.go(SCENE_KEYS.CHARACTER_SELECT, { config: this.resultsData.config, selecting: 1 }) },
+        { label: 'CHANGE FIGHTER', onClick: () => this.go(SCENE_KEYS.CHARACTER_SELECT, { config: this.resultsData.config, selecting: 1 }) },
         { label: 'CHANGE ARENA', onClick: () => this.go(SCENE_KEYS.ARENA_SELECT, { config: this.resultsData.config }) },
         { label: 'MAIN MENU', onClick: () => this.go(SCENE_KEYS.MENU) },
       ];

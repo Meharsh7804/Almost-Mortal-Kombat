@@ -113,7 +113,7 @@ export class ResultsScreen {
 
     if (options.extraLines && options.extraLines.length > 0) {
       options.extraLines.slice(0, 4).forEach((line, i) => {
-        container.add(this.scene.add.text(GAME_WIDTH / 2, 468 + i * 18, line, {
+        container.add(this.scene.add.text(GAME_WIDTH / 2, 452 + i * 16, line, {
           fontFamily: FONTS.mono,
           fontSize: '11px',
           color: CSS_COLORS.violet,
@@ -133,28 +133,40 @@ export class ResultsScreen {
       ? [...options.actions]
       : [
           { label: 'REMATCH', onClick: options.onRematch ?? (() => {}) },
-          { label: 'CHANGE FIGHTERS', onClick: options.onChangeFighters ?? (() => {}) },
+          { label: 'CHANGE FIGHTER', onClick: options.onChangeFighters ?? (() => {}) },
           { label: 'CHANGE ARENA', onClick: options.onChangeArena ?? (() => {}) },
           { label: 'MAIN MENU', onClick: options.onMenu ?? (() => {}) },
         ];
 
+    // Two compact columns keep every label inside its panel instead of relying
+    // on a single tightly-packed row whose glows and 26px labels overlapped.
     const count = defs.length;
-    const h = 44;
-    const y = 552;
-    const w = count <= 4 ? 250 : Math.max(170, Math.floor(980 / count) - 12);
-    const gap = w + 16;
-    const startX = GAME_WIDTH / 2 - (gap * (count - 1)) / 2;
+    const columns = Math.min(2, Math.max(1, count));
+    const rows = Math.ceil(count / columns);
+    const w = 320;
+    const h = 38;
+    const xGap = 40;
+    const yGap = 46;
+    const totalWidth = columns * w + (columns - 1) * xGap;
+    const startX = GAME_WIDTH / 2 - totalWidth / 2 + w / 2;
+    const startY = rows > 1 ? 536 : 558;
 
-    this.buttons = defs.map((def, i) =>
-      new MenuButton(this.scene, {
-        x: startX + i * gap,
-        y,
+    this.buttons = defs.map((def, i) => {
+      const column = i % columns;
+      const row = Math.floor(i / columns);
+      return new MenuButton(this.scene, {
+        x: startX + column * (w + xGap),
+        y: startY + row * yGap,
         width: w,
         height: h,
         label: def.label,
+        fontSize: 16,
+        letterSpacing: 3,
+        glowPaddingX: 20,
+        glowPaddingY: 50,
         onClick: () => this.invoke(def.onClick),
-      }).setDepth(BUTTON_DEPTH),
-    );
+      }).setDepth(BUTTON_DEPTH);
+    });
   }
 
   hide(): void {
@@ -177,10 +189,10 @@ export class ResultsScreen {
     const [p1, p2] = stats.players;
     const leftX = 320;
     const rightX = 960;
-    const startY = 270;
-    const line = 30;
+    const startY = 262;
+    const line = 26;
 
-    const header = this.scene.add.text(GAME_WIDTH / 2, 244, `ROUNDS ${options.roundsWon![0]} - ${options.roundsWon![1]}  •  ${Math.round(stats.durationSeconds)}s`, {
+    const header = this.scene.add.text(GAME_WIDTH / 2, 236, `ROUNDS ${options.roundsWon![0]} - ${options.roundsWon![1]}  •  ${Math.round(stats.durationSeconds)}s`, {
       fontFamily: FONTS.mono,
       fontSize: '12px',
       color: CSS_COLORS.muted,
@@ -197,8 +209,8 @@ export class ResultsScreen {
       [String(p1.specialsUsed), 'SPECIALS USED', String(p2.specialsUsed)],
     ];
 
-    c.add(this.scene.add.text(leftX, startY - 28, options.p1Name!, { fontFamily: FONTS.display, fontSize: '16px', color: CSS_COLORS.bone }).setOrigin(0.5));
-    c.add(this.scene.add.text(rightX, startY - 28, options.p2Name!, { fontFamily: FONTS.display, fontSize: '16px', color: CSS_COLORS.bone }).setOrigin(0.5));
+    c.add(this.scene.add.text(leftX, startY - 26, options.p1Name!, { fontFamily: FONTS.display, fontSize: '16px', color: CSS_COLORS.bone }).setOrigin(0.5));
+    c.add(this.scene.add.text(rightX, startY - 26, options.p2Name!, { fontFamily: FONTS.display, fontSize: '16px', color: CSS_COLORS.bone }).setOrigin(0.5));
 
     rows.forEach((row, i) => {
       const y = startY + i * line;

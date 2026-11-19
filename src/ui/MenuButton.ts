@@ -11,6 +11,11 @@ export interface MenuButtonConfig {
   readonly height: number;
   readonly label: string;
   readonly onClick: () => void;
+  /** Compact action rows can override the display size to keep labels inside the panel. */
+  readonly fontSize?: number;
+  readonly letterSpacing?: number;
+  readonly glowPaddingX?: number;
+  readonly glowPaddingY?: number;
 }
 
 /**
@@ -20,6 +25,8 @@ export interface MenuButtonConfig {
  */
 export class MenuButton extends Phaser.GameObjects.Container {
   private readonly glow: Phaser.GameObjects.Image;
+  /** Visual-only group. Scaling it never changes the interactive hit area. */
+  private readonly visuals: Phaser.GameObjects.Container;
   private readonly panel: Phaser.GameObjects.Graphics;
   private readonly labelText: Phaser.GameObjects.Text;
   private readonly panelWidth: number;
@@ -28,6 +35,7 @@ export class MenuButton extends Phaser.GameObjects.Container {
 
   private hovered = false;
   private pressed = false;
+  private selected = false;
 
   constructor(scene: Phaser.Scene, config: MenuButtonConfig) {
     super(scene, config.x, config.y);
@@ -40,7 +48,10 @@ export class MenuButton extends Phaser.GameObjects.Container {
 
     this.glow = scene.add
       .image(0, 0, TEXTURE_KEYS.glowSoft)
-      .setDisplaySize(config.width + 300, config.height + 220)
+      .setDisplaySize(
+        config.width + (config.glowPaddingX ?? 160),
+        config.height + (config.glowPaddingY ?? 120),
+      )
       .setTint(COLORS.crimson)
       .setAlpha(0.13)
       .setBlendMode(Phaser.BlendModes.ADD);
@@ -50,15 +61,16 @@ export class MenuButton extends Phaser.GameObjects.Container {
     this.labelText = scene.add
       .text(0, 0, config.label, {
         fontFamily: FONTS.display,
-        fontSize: '26px',
+        fontSize: `${config.fontSize ?? 26}px`,
         color: CSS_COLORS.bone,
         align: 'center',
       })
       .setOrigin(0.5)
-      .setLetterSpacing(8);
+      .setLetterSpacing(config.letterSpacing ?? 8);
     this.labelText.setShadow(0, 0, CSS_COLORS.crimson, 16, true, true);
 
-    this.add([this.glow, this.panel, this.labelText]);
+    this.visuals = scene.add.container(0, 0, [this.panel, this.labelText]);
+    this.add([this.glow, this.visuals]);
     this.setSize(config.width, config.height);
     this.setDepth(20);
 
@@ -72,25 +84,35 @@ export class MenuButton extends Phaser.GameObjects.Container {
     this.labelText.setText(label);
   }
 
+  /** Keyboard/selection highlight that never fights the hover scale tween. */
+  setSelected(selected: boolean): void {
+    if (this.selected === selected) return;
+    this.selected = selected;
+    this.drawPanel();
+  }
+
   pulse(): void {
+    const restAlpha = this.hovered ? 0.2 : 0.13;
     this.scene.tweens.killTweensOf(this.glow);
-    this.glow.setAlpha(0.34);
+    this.glow.setAlpha(Math.max(this.glow.alpha, 0.26));
     this.scene.tweens.add({
       targets: this.glow,
-      alpha: this.hovered ? 0.2 : 0.13,
-      duration: 520,
+      alpha: restAlpha,
+      duration: 320,
       ease: 'Sine.easeOut',
     });
 
     this.scene.tweens.killTweensOf(this.labelText);
+    this.labelText.setPosition(0, 0);
     this.labelText.setColor(CSS_COLORS.pearl);
     this.scene.tweens.add({
       targets: this.labelText,
-      y: -4,
+      y: -3,
       duration: 90,
       yoyo: true,
       ease: 'Quad.easeOut',
       onComplete: () => {
+        this.labelText.setPosition(0, 0);
         this.labelText.setColor(CSS_COLORS.bone);
       },
     });
@@ -145,9 +167,11 @@ export class MenuButton extends Phaser.GameObjects.Container {
   }
 
   private tweenScale(scale: number): void {
-    this.scene.tweens.killTweensOf(this);
+    // Scale visuals only. Scaling the interactive container resizes its hit
+    // area, which makes the pointer oscillate between over/out near the edges.
+    this.scene.tweens.killTweensOf(this.visuals);
     this.scene.tweens.add({
-      targets: this,
+      targets: this.visuals,
       scaleX: scale,
       scaleY: scale,
       duration: 140,
@@ -169,7 +193,9 @@ export class MenuButton extends Phaser.GameObjects.Container {
     const graphics = this.panel;
     const width = this.panelWidth;
     const height = this.panelHeight;
-    const cut = 16;
+    const cut = Math.min(16, height / 4, width / 8);
+    const active = this.hovered || this.selected;
+    const accentLength = Math.min(46, width * 0.2);
 
     graphics.clear();
 
@@ -191,24 +217,29 @@ export class MenuButton extends Phaser.GameObjects.Container {
     graphics.fillPath();
 
     this.tracePanel(graphics, width, height, cut);
-    graphics.lineStyle(1, this.hovered ? COLORS.crimson : COLORS.line, this.hovered ? 0.95 : 0.7);
+    graphics.lineStyle(active ? 2 : 1, active ? COLORS.crimson : COLORS.line, active ? 0.98 : 0.7);
     graphics.strokePath();
 
-    graphics.lineStyle(2, COLORS.crimson, this.hovered ? 1 : 0.8);
-    graphics.lineBetween(-width / 2 + cut, -height / 2, -width / 2 + cut + 46, -height / 2);
-    graphics.lineBetween(width / 2 - cut, height / 2, width / 2 - cut - 46, height / 2);
+    graphics.lineStyle(2, COLORS.crimson, active ? 1 : 0.8);
+    graphics.lineBetween(-width / 2 + cut, -height / 2, -width / 2 + cut + accentLength, -height / 2);
+    graphics.lineBetween(width / 2 - cut, height / 2, width / 2 - cut - accentLength, height / 2);
 
-    graphics.lineStyle(1, COLORS.violet, this.hovered ? 0.34 : 0.2);
+    graphics.lineStyle(1, COLORS.violet, active ? 0.34 : 0.2);
     graphics.lineBetween(
-      -width / 2 + cut + 58,
+      -width / 2 + cut + accentLength + 12,
       -height / 2 + 7,
-      width / 2 - cut - 20,
+      width / 2 - cut - 12,
       -height / 2 + 7,
     );
 
-    graphics.fillStyle(COLORS.crimson, this.hovered ? 1 : 0.82);
-    graphics.fillTriangle(-width / 2 + 26, 0, -width / 2 + 34, -4, -width / 2 + 34, 4);
-    graphics.fillTriangle(width / 2 - 26, 0, width / 2 - 34, -4, width / 2 - 34, 4);
+    graphics.fillStyle(COLORS.crimson, active ? 1 : 0.82);
+    graphics.fillTriangle(-width / 2 + 18, 0, -width / 2 + 26, -4, -width / 2 + 26, 4);
+    graphics.fillTriangle(width / 2 - 18, 0, width / 2 - 26, -4, width / 2 - 26, 4);
+
+    if (this.selected) {
+      graphics.fillStyle(COLORS.gold, 0.95);
+      graphics.fillTriangle(-width / 2 + 8, 0, -width / 2 + 15, -5, -width / 2 + 15, 5);
+    }
   }
 
   private tracePanel(

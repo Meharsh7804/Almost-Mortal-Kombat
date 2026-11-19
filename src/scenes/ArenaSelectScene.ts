@@ -4,14 +4,30 @@ import { getAudioManager } from '../audio/AudioManager';
 import { SCENE_KEYS } from '../core/GameConfig';
 import { getGameLoop } from '../core/GameLoop';
 import { getArenaRegistry, getRandomArenaId } from '../data/ArenaRegistry';
+import type { ArenaDefinition } from '../data/ArenaRegistry';
 import type { MatchConfig } from '../data/MatchConfig';
+import { drawArenaPreview } from '../ui/ArenaPreview';
 import { MenuBackdrop } from '../ui/MenuBackdrop';
 import { MenuButton } from '../ui/MenuButton';
-import { CSS_COLORS, FONTS, toCssColor } from '../ui/Theme';
+import { COLORS, CSS_COLORS, FONTS, toCssColor } from '../ui/Theme';
 
 interface SceneData {
   readonly config: MatchConfig;
 }
+
+interface ArenaCard {
+  readonly arena: ArenaDefinition;
+  readonly zone: Phaser.GameObjects.Zone;
+  readonly graphics: Phaser.GameObjects.Graphics;
+  readonly label: Phaser.GameObjects.Text;
+  readonly detail: Phaser.GameObjects.Text;
+}
+
+const FEATURE_BOUNDS = { x: 300, y: 108, width: 680, height: 182 } as const;
+const CARD_WIDTH = 260;
+const CARD_HEIGHT = 108;
+const CARD_CENTER_Y = 450;
+const CARD_GAP = 14;
 
 export class ArenaSelectScene extends Phaser.Scene {
   private backdrop?: MenuBackdrop;
@@ -20,10 +36,11 @@ export class ArenaSelectScene extends Phaser.Scene {
   private config!: MatchConfig;
   private index = 0;
   private buttons: MenuButton[] = [];
+  private cards: ArenaCard[] = [];
+  private feature!: Phaser.GameObjects.Graphics;
   private previewName!: Phaser.GameObjects.Text;
   private previewDesc!: Phaser.GameObjects.Text;
   private previewMeta!: Phaser.GameObjects.Text;
-  private previewBox!: Phaser.GameObjects.Graphics;
 
   constructor() {
     super({ key: SCENE_KEYS.ARENA_SELECT });
@@ -42,32 +59,58 @@ export class ArenaSelectScene extends Phaser.Scene {
     this.backdrop = new MenuBackdrop(this);
     getAudioManager(this.game)?.attach(this.sound);
 
-    this.add.text(640, 90, 'ARENA SELECT', {
-      fontFamily: FONTS.display, fontSize: '50px', color: CSS_COLORS.bone, stroke: '#000000', strokeThickness: 6,
+    this.add.text(640, 52, 'ARENA SELECT', {
+      fontFamily: FONTS.display,
+      fontSize: '48px',
+      color: CSS_COLORS.bone,
+      stroke: '#000000',
+      strokeThickness: 6,
     }).setOrigin(0.5);
 
-    this.previewBox = this.add.graphics();
-    this.previewName = this.add.text(640, 210, '', { fontFamily: FONTS.display, fontSize: '36px', color: CSS_COLORS.bone }).setOrigin(0.5);
-    this.previewDesc = this.add.text(640, 290, '', { fontFamily: FONTS.body, fontSize: '18px', color: CSS_COLORS.muted, align: 'center', wordWrap: { width: 520 } }).setOrigin(0.5);
-    this.previewMeta = this.add.text(640, 360, '', { fontFamily: FONTS.mono, fontSize: '12px', color: CSS_COLORS.violet, align: 'center', lineSpacing: 8 }).setOrigin(0.5);
+    this.add.text(640, 88, 'CHOOSE THE BATTLEGROUND', {
+      fontFamily: FONTS.mono,
+      fontSize: '11px',
+      color: CSS_COLORS.muted,
+    }).setOrigin(0.5).setLetterSpacing(4).setAlpha(0.8);
 
-    const arenas = getArenaRegistry();
-    arenas.forEach((arena, i) => {
-      const col = i % 2;
-      const row = Math.floor(i / 2);
-      this.buttons.push(new MenuButton(this, {
-        x: 260 + col * 760,
-        y: 430 + row * 86,
-        width: 320,
-        height: 54,
-        label: arena.name.toUpperCase(),
-        onClick: () => { this.index = i; this.refreshPreview(); },
-      }));
-    });
+    this.feature = this.add.graphics().setDepth(2);
+    this.previewName = this.add.text(640, 124, '', {
+      fontFamily: FONTS.display,
+      fontSize: '32px',
+      color: CSS_COLORS.bone,
+      stroke: '#000000',
+      strokeThickness: 5,
+    }).setOrigin(0.5).setDepth(3);
 
-    this.buttons.push(new MenuButton(this, { x: 640, y: 605, width: 220, height: 44, label: 'RANDOM', onClick: () => this.randomize() }));
-    this.buttons.push(new MenuButton(this, { x: 520, y: 662, width: 220, height: 44, label: 'CONFIRM', onClick: () => this.confirm() }));
-    this.buttons.push(new MenuButton(this, { x: 760, y: 662, width: 220, height: 44, label: 'BACK', onClick: () => this.back() }));
+    this.previewDesc = this.add.text(640, 318, '', {
+      fontFamily: FONTS.body,
+      fontSize: '16px',
+      color: CSS_COLORS.muted,
+      align: 'center',
+      wordWrap: { width: 760 },
+    }).setOrigin(0.5);
+
+    this.previewMeta = this.add.text(640, 360, '', {
+      fontFamily: FONTS.mono,
+      fontSize: '11px',
+      color: CSS_COLORS.violet,
+      align: 'center',
+      lineSpacing: 6,
+    }).setOrigin(0.5).setLetterSpacing(1);
+
+    this.createArenaCards();
+
+    this.buttons.push(
+      new MenuButton(this, { x: 450, y: 568, width: 180, height: 40, label: 'RANDOM', fontSize: 17, letterSpacing: 4, glowPaddingX: 20, glowPaddingY: 50, onClick: () => this.randomize() }),
+      new MenuButton(this, { x: 640, y: 568, width: 180, height: 40, label: 'CONFIRM', fontSize: 17, letterSpacing: 4, glowPaddingX: 20, glowPaddingY: 50, onClick: () => this.confirm() }),
+      new MenuButton(this, { x: 830, y: 568, width: 180, height: 40, label: 'BACK', fontSize: 17, letterSpacing: 4, glowPaddingX: 20, glowPaddingY: 50, onClick: () => this.back() }),
+    );
+
+    this.add.text(640, 626, 'ARROWS/A-D PICK  •  R RANDOM  •  ENTER CONFIRM  •  ESC BACK', {
+      fontFamily: FONTS.mono,
+      fontSize: '10px',
+      color: CSS_COLORS.muted,
+    }).setOrigin(0.5).setAlpha(0.72);
 
     this.refreshPreview();
     this.bindInput();
@@ -77,33 +120,85 @@ export class ArenaSelectScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.shutdown, this);
   }
 
+  private createArenaCards(): void {
+    const arenas = getArenaRegistry();
+    const totalWidth = arenas.length * CARD_WIDTH + Math.max(0, arenas.length - 1) * CARD_GAP;
+    const startX = 640 - totalWidth / 2 + CARD_WIDTH / 2;
+
+    this.cards = arenas.map((arena, index) => {
+      const x = startX + index * (CARD_WIDTH + CARD_GAP);
+      const graphics = this.add.graphics().setDepth(4);
+      const label = this.add.text(x, 475, arena.name.toUpperCase(), {
+        fontFamily: FONTS.display,
+        fontSize: '16px',
+        color: CSS_COLORS.bone,
+      }).setOrigin(0.5).setDepth(5);
+      const detail = this.add.text(x, 493, `${arena.theme.motif.toUpperCase()}  •  PARALLAX ${arena.parallax.mid}`, {
+        fontFamily: FONTS.mono,
+        fontSize: '9px',
+        color: CSS_COLORS.muted,
+      }).setOrigin(0.5).setDepth(5).setLetterSpacing(1);
+
+      const zone = this.add.zone(x, CARD_CENTER_Y, CARD_WIDTH, CARD_HEIGHT).setInteractive({ useHandCursor: true });
+      zone.on('pointerover', () => {
+        if (this.starting || this.index === index) return;
+        this.index = index;
+        this.refreshPreview();
+        getAudioManager(this.game)?.playUi('ui-move');
+      });
+      zone.on('pointerdown', () => {
+        if (this.starting) return;
+        this.index = index;
+        this.refreshPreview();
+      });
+
+      return { arena, zone, graphics, label, detail };
+    });
+  }
+
   private refreshPreview(): void {
     const arenas = getArenaRegistry();
     const arena = arenas[this.index] ?? arenas[0];
     if (!arena) return;
 
-    this.previewName.setText(arena.name).setColor(toCssColor(arena.theme.accentA));
-    this.previewDesc.setText(arena.description);
-    this.previewMeta.setText(`VISUAL STAGE ONLY  •  COMBAT PLANE PRESERVED\nMOTIF: ${arena.theme.motif.toUpperCase()}  •  PARALLAX: ${arena.parallax.mid}\nAMBIENCE: ${(arena.atmosphere.particleAlpha * 100).toFixed(0)}%`);
+    this.feature.clear();
+    drawArenaPreview(this.feature, arena, FEATURE_BOUNDS, { selected: true });
 
-    this.previewBox.clear();
-    this.previewBox.fillGradientStyle(arena.theme.skyTop, arena.theme.skyTop, arena.theme.skyBottom, arena.theme.skyBottom, 1);
-    this.previewBox.fillRoundedRect(360, 160, 560, 230, 14);
-    this.previewBox.fillStyle(arena.theme.horizon, 0.6);
-    this.previewBox.fillRoundedRect(380, 250, 520, 90, 10);
-    this.previewBox.fillStyle(arena.theme.floorTop, 0.95);
-    this.previewBox.fillRect(380, 330, 520, 40);
-    this.previewBox.lineStyle(3, arena.theme.accentA, 0.7);
-    this.previewBox.strokeRoundedRect(360, 160, 560, 230, 14);
-    this.previewBox.lineStyle(2, arena.theme.accentB, 0.5);
-    this.previewBox.lineBetween(420, 340, 860, 340);
+    this.previewName.setText(arena.name.toUpperCase()).setColor(toCssColor(arena.theme.accentA));
+    this.previewDesc.setText(arena.description);
+    this.previewMeta.setText(
+      `MOTIF ${arena.theme.motif.toUpperCase()}  •  PARALLAX ${arena.parallax.mid}  •  AMBIENCE ${(arena.atmosphere.particleAlpha * 100).toFixed(0)}%`,
+    );
+
+    this.cards.forEach((card, index) => {
+      const active = index === this.index;
+      const x = card.zone.x;
+      const y = card.zone.y;
+      const accent = active ? card.arena.theme.accentA : card.arena.theme.frame;
+
+      card.graphics.clear();
+      card.graphics.fillStyle(COLORS.panel, active ? 0.94 : 0.7);
+      card.graphics.fillRoundedRect(x - CARD_WIDTH / 2, y - CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, 10);
+      drawArenaPreview(
+        card.graphics,
+        card.arena,
+        { x: x - 118, y: y - 46, width: 236, height: 54 },
+        { selected: active },
+      );
+      card.graphics.lineStyle(active ? 2.5 : 1, accent, active ? 1 : 0.55);
+      card.graphics.strokeRoundedRect(x - CARD_WIDTH / 2, y - CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, 10);
+
+      card.label.setColor(active ? CSS_COLORS.pearl : CSS_COLORS.bone).setAlpha(active ? 1 : 0.72);
+      card.detail.setColor(toCssColor(active ? card.arena.theme.accentB : 0x9d92ae));
+    });
   }
 
   private bindInput(): void {
+    const columns = Math.max(1, Math.min(4, getArenaRegistry().length));
     this.input.keyboard?.on('keydown-LEFT', () => this.move(-1), this);
     this.input.keyboard?.on('keydown-RIGHT', () => this.move(1), this);
-    this.input.keyboard?.on('keydown-UP', () => this.move(-2), this);
-    this.input.keyboard?.on('keydown-DOWN', () => this.move(2), this);
+    this.input.keyboard?.on('keydown-UP', () => this.move(-columns), this);
+    this.input.keyboard?.on('keydown-DOWN', () => this.move(columns), this);
     this.input.keyboard?.on('keydown-A', () => this.move(-1), this);
     this.input.keyboard?.on('keydown-D', () => this.move(1), this);
     this.input.keyboard?.on('keydown-R', this.randomize, this);
@@ -115,7 +210,8 @@ export class ArenaSelectScene extends Phaser.Scene {
   private move(delta: number): void {
     if (this.starting) return;
     const arenas = getArenaRegistry();
-    this.index = (this.index + delta + arenas.length * 10) % arenas.length;
+    if (arenas.length === 0) return;
+    this.index = ((this.index + delta) % arenas.length + arenas.length) % arenas.length;
     this.refreshPreview();
     getAudioManager(this.game)?.playUi('ui-move');
   }
@@ -168,8 +264,15 @@ export class ArenaSelectScene extends Phaser.Scene {
   private shutdown(): void {
     this.unsubscribeLoop?.(); this.unsubscribeLoop = null;
     this.input.keyboard?.removeAllListeners();
-    for (const b of this.buttons) b.destroy();
+    for (const button of this.buttons) button.destroy();
     this.buttons = [];
+    for (const card of this.cards) {
+      card.zone.destroy();
+      card.graphics.destroy();
+      card.label.destroy();
+      card.detail.destroy();
+    }
+    this.cards = [];
     this.backdrop = undefined;
   }
 }

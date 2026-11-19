@@ -411,6 +411,14 @@ export class BattleScene extends Phaser.Scene {
     const inputs = this.inputManager.poll();
     const result = this.match.update(inputs);
 
+    const newPhase = this.match.matchPhase;
+    if (prevPhase === 'ROUND_OVER' && newPhase === 'READY') {
+      // Reset presentation state before this tick's pose sampling so the KO
+      // slump can never be drawn once the new round is live.
+      this.fighterViews?.[0].reset();
+      this.fighterViews?.[1].reset();
+    }
+
     this.statsTracker.tick();
     this.statsTracker.onCombatEvents(result.events);
 
@@ -428,7 +436,6 @@ export class BattleScene extends Phaser.Scene {
     }
 
     // Detect phase transitions
-    const newPhase = this.match.matchPhase;
     if (prevPhase !== 'ROUND_OVER' && newPhase === 'ROUND_OVER') {
       const rw = this.match.roundWinnerFighter;
       this.statsTracker.onRoundEnd(rw ? rw.playerNumber : null);

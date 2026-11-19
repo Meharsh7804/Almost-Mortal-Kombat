@@ -108,6 +108,22 @@ export class FighterView {
   }
 
   /**
+   * Clears presentation-only state that survives a simulation reset. Without
+   * this, the terminal DEFEAT clip keeps rendering the KO slump in the next
+   * round even though the Fighter itself is back in IDLE at full health.
+   */
+  reset(): void {
+    this.animator.reset();
+    this.flashFrames = 0;
+    this.victory = false;
+    this.rig.setFlash(false);
+    this.rig.setAlpha(1);
+    this.rig.applyPose(this.animator.pose);
+    this.rig.setPosition(this.fighter.x, this.fighter.y);
+    this.rig.setFacing(this.fighter.facing);
+  }
+
+  /**
    * Advance deterministic animation state by exactly one simulation tick.
    * Returns presentation-only landing information for dust effects.
    */
